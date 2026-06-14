@@ -1,0 +1,51 @@
+{
+  "$schema": "https://schema.tauri.app/config/2.0",
+  "productName": "PlantOmics Studio",
+  "mainBinaryName": "plantomics-studio",
+  "version": "1.0.0",
+  "identifier": "com.plantomics.studio",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "PlantOmics Studio",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 1024,
+        "minHeight": 700,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb"],
+    "category": "Education",
+    "icon": [
+      "icons/icon.png"
+    ],
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0"
+        ],
+        "section": "science",
+        "priority": "optional"
+      }
+    },
+    "shortDescription": "Plant omics analysis platform",
+    "longDescription": "PlantOmics Studio: 桌面组学分析工具,模块化设计,支持转录组/蛋白组等多种组学。"
+  }
+}

@@ -1,0 +1,73 @@
+name: Build & Release Core
+
+# 触发:推 git tag(例如 git tag v1.0.0 && git push --tags)
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:  # 也允许手动触发
+
+jobs:
+  build-core:
+    runs-on: ubuntu-22.04   # 跟用户机器版本一致
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 装系统依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 装 pnpm
+        run: npm install -g pnpm
+
+      - name: 装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 装 mamba(更快的 conda)
+        uses: mamba-org/setup-micromamba@v1
+        with:
+          micromamba-version: latest
+
+      - name: 缓存 Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core/src-tauri -> target
+
+      - name: 缓存 conda env
+        uses: actions/cache@v4
+        with:
+          path: build/conda-env
+          key: conda-env-${{ hashFiles('core/conda-env/base.yaml') }}
+
+      - name: 构建主程序 deb
+        run: bash scripts/build-deb.sh
+
+      - name: 找产物
+        id: find-deb
+        run: |
+          DEB=$(ls dist/plantomics-studio_*.deb | head -1)
+          echo "deb=$DEB" >> $GITHUB_OUTPUT
+          echo "deb_name=$(basename $DEB)" >> $GITHUB_OUTPUT
+
+      - name: 上传到 Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.find-deb.outputs.deb }}
+          generate_release_notes: true
+
+      - name: 上传到 Artifacts(workflow_dispatch 时)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.find-deb.outputs.deb_name }}
+          path: ${{ steps.find-deb.outputs.deb }}

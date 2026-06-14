@@ -1,0 +1,34 @@
+[package]
+name = "plantomics-studio"
+version = "1.0.0"
+description = "PlantOmics Studio - Plant omics analysis platform"
+authors = ["PlantOmics Team"]
+license = "GPL-3.0"
+edition = "2021"
+
+[lib]
+name = "plantomics_studio_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+# 锁死 time 到 0.3.47:0.3.48 与 tauri-utils 2.9.2 的 blanket impl 在新 rustc 下冲突(E0119)。
+# plist 1.9.0 要求 time ^0.3.47,所以 0.3.47 是允许的最低版本,正好避开 0.3.48。
+# 有了这行就不用每次手动 cargo update -p time。
+time = "=0.3.47"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+anyhow = "1"
+thiserror = "1"
+log = "0.4"
+env_logger = "0.11"
+chrono = { version = "0.4", features = ["serde"] }

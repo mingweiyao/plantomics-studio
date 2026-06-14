@@ -1,0 +1,60 @@
+# PlantOmics Studio 模块 Manifest
+# ============================================
+# 这个文件告诉主程序:
+#   - 这个模块是什么、什么版本
+#   - 与主程序的兼容范围
+#   - 它能贡献什么(项目类型、参考类型、菜单项)
+#   - 它的后端进程怎么启动
+
+id: omics-rnaseq-bulk
+name: Bulk RNA-seq 转录组
+version: 1.0.0
+description: |
+  基于 STAR + DESeq2 的标准 bulk 转录组分析流程:
+  从 fastq/SRA 到差异表达基因 + GO/KEGG 富集 + WGCNA 共表达网络。
+author: PlantOmics Team
+license: GPL-3.0
+icon: dna   # lucide-react 图标名
+
+# 主程序版本兼容范围(semver)
+core_required: ">=1.0.0,<2.0.0"
+
+# 模块在主程序里要扩展的能力
+extends:
+  # 在"新建项目"页可选的项目类型
+  project_types:
+    - id: bulk_rnaseq
+      name: Bulk RNA-seq 转录组
+      description: 从 fastq/SRA 到差异表达 + 富集 + WGCNA 的全流程
+
+  # 模块可识别的参考资源类型
+  reference_types:
+    - id: rnaseq_genome_annotation
+      name: 转录组参考(基因组+注释)
+      description: STAR 比对 + featureCounts 量化用的基因组 FASTA + GTF 注释
+      required_files:
+        - id: fasta
+          label: 基因组 FASTA
+          extensions: [fa, fasta, fna, fa.gz, fasta.gz, fna.gz]
+          required: true
+        - id: gtf
+          label: 基因结构注释 GTF
+          extensions: [gtf, gff, gff3, gtf.gz, gff.gz, gff3.gz]
+          required: true
+
+  # 项目详情页要显示的菜单项(模块前端要实现对应路由)
+  menu_items:
+    - id: upstream
+      label: 数据处理
+      icon: cog
+      route: /upstream
+      description: SRA / QC / 过滤 / 比对 / 量化 / 标准化(支持一键运行)
+
+# 后端进程配置
+runtime:
+  python:
+    entry: backend-py/main.py
+    health_path: /health
+  r:
+    entry: backend-r/plumber.R
+    health_path: /health

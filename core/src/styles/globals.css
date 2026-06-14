@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* 中性底色 —— 偏冷的科研工具灰白(Benchling/Linear 取向) */
+  --bg-base: 248 249 251;
+  --bg-surface: 255 255 255;
+  --bg-muted: 238 240 244;
+  --bg-inset: 244 246 249;
+  --border: 226 230 236;
+  --ink: 24 27 34;
+  --ink-muted: 86 92 104;
+  --ink-faint: 142 149 161;
+  --accent: 22 163 120;          /* 主色:沉稳的科研绿 */
+  --accent-soft: 224 244 237;    /* 主色淡底 */
+
+  /* 步骤 5 态配色(圆形流程图用) */
+  --state-pending: 156 163 175;     /* 未配置:中性灰 */
+  --state-configured: 59 130 246;   /* 已配置:蓝 */
+  --state-running: 22 163 120;      /* 运行中:主色 */
+  --state-done: 22 163 74;          /* 已完成:绿 */
+  --state-failed: 220 80 80;        /* 失败:红 */
+
+  --shadow-card: 0 1px 2px rgb(16 24 40 / 0.04), 0 1px 3px rgb(16 24 40 / 0.06);
+  --shadow-pop: 0 6px 24px rgb(16 24 40 / 0.10), 0 2px 6px rgb(16 24 40 / 0.06);
+}
+
+.dark {
+  --bg-base: 16 18 23;
+  --bg-surface: 24 27 33;
+  --bg-muted: 34 38 46;
+  --bg-inset: 20 23 29;
+  --border: 44 49 59;
+  --ink: 236 239 244;
+  --ink-muted: 168 176 188;
+  --ink-faint: 120 128 140;
+  --accent: 38 197 154;
+  --accent-soft: 22 46 40;
+  --state-pending: 100 108 122;
+  --state-configured: 96 165 250;
+  --state-running: 38 197 154;
+  --state-done: 52 197 110;
+  --state-failed: 240 110 110;
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3), 0 1px 3px rgb(0 0 0 / 0.4);
+  --shadow-pop: 0 8px 28px rgb(0 0 0 / 0.5);
+}
+
+html, body {
+  background-color: rgb(var(--bg-base));
+  color: rgb(var(--ink));
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC",
+               "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv05", "ss01";
+}
+
+/* ── 不确定进度条动画 ── */
+@keyframes plantomics-indeterminate {
+  0%   { left: -40%; width: 40%; }
+  50%  { left: 30%;  width: 50%; }
+  100% { left: 100%; width: 40%; }
+}
+.progress-indeterminate {
+  position: absolute; top: 0; bottom: 0;
+  background-color: rgb(var(--accent));
+  border-radius: inherit;
+  animation: plantomics-indeterminate 1.3s ease-in-out infinite;
+}
+
+/* ── 圆形流程图:运行中节点的呼吸光环 ── */
+@keyframes plantomics-pulse-ring {
+  0%   { box-shadow: 0 0 0 0 rgb(var(--state-running) / 0.45); }
+  70%  { box-shadow: 0 0 0 12px rgb(var(--state-running) / 0); }
+  100% { box-shadow: 0 0 0 0 rgb(var(--state-running) / 0); }
+}
+.flow-node-running { animation: plantomics-pulse-ring 1.6s ease-out infinite; }
+
+/* ── 圆形流程图:轨道流向的虚线流动 ── */
+@keyframes plantomics-orbit-dash {
+  to { stroke-dashoffset: -1000; }
+}
+.flow-orbit-active { animation: plantomics-orbit-dash 18s linear infinite; }
+
+/* ── 节点悬停微抬升 ── */
+.flow-node { transition: transform .15s ease, box-shadow .15s ease; }
+.flow-node:hover { transform: translateY(-2px); }

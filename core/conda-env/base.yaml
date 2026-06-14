@@ -1,0 +1,36 @@
+# PlantOmics Studio 主程序 conda 环境
+# ====================================
+# 极简:只包含主程序后端运行需要的 Python + Web 框架。
+# 也带一个 gffread,因为创建项目时可能要把 GFF 转 GTF。
+#
+# 镜像配置由 build-deb.sh 在创建环境时设置(.condarc),不写在这里。
+
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+
+dependencies:
+  # Python 运行时
+  - python=3.11
+
+  # Web 框架
+  - fastapi
+  - uvicorn
+  - pydantic>=2.0
+  - python-multipart       # FastAPI 文件上传
+  - httpx                  # 主程序内部转发请求到模块用
+
+  # 系统工具
+  - pyyaml                 # 读 module.yaml / modules.json
+  - aiofiles               # 异步文件 IO
+  - psutil                 # 模块进程健康检查、资源监控
+
+  # GFF→GTF 转换(创建项目时)
+  - bioconda::gffread
+
+  # conda-pack(打 deb 时用,装到 env 里方便 unpack)
+  - conda-pack
+
+  # 包管理工具
+  - pip

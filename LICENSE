@@ -1,0 +1,33 @@
+                    GNU GENERAL PUBLIC LICENSE
+                       Version 3, 29 June 2007
+
+ Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>
+ Everyone is permitted to copy and distribute verbatim copies
+ of this license document, but changing it is not allowed.
+
+[完整 LICENSE 文本请用以下命令生成 — 我给你引用 GitHub 模板,
+这里只放占位,你 push 时用 GitHub 网页 "Add License" 按钮自动填:]
+
+------------------------------------------------------------------
+
+PlantOmics Studio - Plant omics analysis platform
+Copyright (C) 2026 [Your Name]
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+------------------------------------------------------------------
+
+注:这是占位 LICENSE。push 到 GitHub 时,在网页上点 "Add file" → 
+"Create new file" → 输入文件名 LICENSE → 右上角 "Choose a license template" 
+按钮选 "GNU General Public License v3.0",GitHub 会自动填好完整文本。

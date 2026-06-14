@@ -1,0 +1,29 @@
+# PlantOmics Studio 模块 Manifest —— 通用下游分析
+id: omics-analysis
+name: 下游分析
+version: 1.0.0
+description: |
+  跨组学通用的下游分析模块:差异表达 + 富集(GO/KEGG/GSEA)+ WGCNA 共表达 + 各类图表。
+  消费组学模块产出的标准化定量矩阵,与具体组学解耦。
+author: PlantOmics Team
+license: GPL-3.0
+icon: bar-chart-3
+
+core_required: ">=1.0.0,<2.0.0"
+
+extends:
+  # 不贡献项目类型(它消费别的组学模块的产出)
+  menu_items:
+    - id: downstream
+      label: 下游分析
+      icon: bar-chart
+      route: /downstream
+      description: 差异分析 / 富集 / WGCNA / 图表(消费标准化矩阵)
+
+runtime:
+  python:
+    entry: backend-py/main.py
+    health_path: /health
+  r:
+    entry: backend-r/plumber.R
+    health_path: /health

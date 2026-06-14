@@ -1,0 +1,53 @@
+name: Build & Release Module - rnaseq-bulk
+
+# 触发:推 git tag 形如 module-rnaseq-bulk-v1.0.0
+on:
+  push:
+    tags:
+      - "module-rnaseq-bulk-v*"
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: modules-source/omics-rnaseq-bulk
+
+jobs:
+  build-module:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60   # conda env 创建可能要 30 分钟
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 装 mamba
+        uses: mamba-org/setup-micromamba@v1
+
+      - name: 缓存 conda env(关键 — 重建省 30 分钟)
+        uses: actions/cache@v4
+        with:
+          path: modules-source/omics-rnaseq-bulk/build/conda-env
+          key: rnaseq-bulk-env-${{ hashFiles('modules-source/omics-rnaseq-bulk/conda-deps/env.yaml') }}
+
+      - name: 构建模块 deb
+        run: bash scripts/build-deb.sh
+
+      - name: 找产物
+        id: find-deb
+        run: |
+          DEB=$(ls dist/plantomics-module-rnaseq-bulk_*.deb | head -1)
+          echo "deb=$DEB" >> $GITHUB_OUTPUT
+          echo "deb_name=$(basename $DEB)" >> $GITHUB_OUTPUT
+        working-directory: modules-source/omics-rnaseq-bulk
+
+      - name: 上传到 Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: modules-source/omics-rnaseq-bulk/${{ steps.find-deb.outputs.deb }}
+
+      - name: 上传到 Artifacts
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.find-deb.outputs.deb_name }}
+          path: modules-source/omics-rnaseq-bulk/${{ steps.find-deb.outputs.deb }}

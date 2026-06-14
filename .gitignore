@@ -1,0 +1,49 @@
+# =============================================================================
+# 构建产物 - 不进 git
+# =============================================================================
+build/                      # conda env、conda-pack tar 等
+dist/                       # 编译好的 .deb 文件
+**/target/                  # Rust 编译产物
+**/node_modules/            # 前端依赖
+**/.tauri/                  # Tauri 缓存
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# R
+.Rhistory
+.RData
+.Ruserdata
+
+# 编辑器/IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 环境/敏感信息
+.env
+.env.*
+!.env.example
+.condarc                    # 用户机器特定的 conda 配置
+
+# 日志
+*.log
+logs/
+
+# 测试产物
+coverage/
+.coverage
+htmlcov/
+
+# 用户数据(永远不该出现在仓库里,但保险起见)
+~/.plantomics/
+.plantomics/

@@ -1,0 +1,69 @@
+name: Bug 报告
+description: 报告软件问题
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      description: 简要描述问题
+      placeholder: 例如:在差异表达分析时崩溃...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 创建项目"xxx"
+        2. 启用"omics-rnaseq-bulk"模块
+        3. 关联资源 TAIR10
+        4. 点击"差异表达"...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+
+  - type: input
+    id: core-version
+    attributes:
+      label: 主程序版本
+      placeholder: v1.0.0
+
+  - type: input
+    id: modules
+    attributes:
+      label: 已装模块和版本
+      placeholder: omics-rnaseq-bulk v1.0.0
+
+  - type: dropdown
+    id: env
+    attributes:
+      label: 操作系统
+      options:
+        - Ubuntu 22.04
+        - Ubuntu 24.04
+        - WSL2 (Windows 11)
+        - WSL2 (Windows 10)
+        - Other Linux
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志
+      description: 用 `RUST_LOG=info plantomics-studio` 启动,贴启动到出错的完整输出
+      render: shell
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: 已确认
+      options:
+        - label: 我已经检查过 issues 里没有重复
+          required: true
