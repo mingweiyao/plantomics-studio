@@ -75,9 +75,8 @@ class CreateProjectRequest(BaseModel):
     # 参考资源(任一可空但创建时强烈建议都填)
     reference_fasta: Optional[str] = None
     reference_gtf_or_gff: Optional[str] = None  # GFF 自动转 GTF
-    # 计算资源(创建时指定;不给则用默认 max(2,nproc-2) / 2)
-    threads: Optional[int] = None        # 单任务核数
-    parallel_jobs: Optional[int] = None  # 并发任务数
+    # 计算资源(创建时只指定"总线程预算";并行度是运行时的全局设置,不在这里设)
+    total_threads: Optional[int] = None  # 该项目可用的总线程预算
 
 
 class UpdateProjectRequest(BaseModel):
@@ -85,8 +84,7 @@ class UpdateProjectRequest(BaseModel):
     description: Optional[str] = None
     reference_fasta: Optional[str] = None
     reference_gtf: Optional[str] = None  # 直接给 GTF,不再自动转(转换由专门端点做)
-    threads: Optional[int] = None
-    parallel_jobs: Optional[int] = None
+    total_threads: Optional[int] = None
 
 
 class SetUpstreamParamsRequest(BaseModel):
@@ -212,12 +210,10 @@ async def create_project(req: CreateProjectRequest, request: Request):
     pdir = _projects_dir(request) / pid
     pdir.mkdir(parents=True, exist_ok=True)
     
-    # 计算资源:用户给了就用(夹紧到合理范围),没给用默认
+    # 计算资源:用户给了总线程预算就用,没给用默认(本机逻辑核心数)
     _comp = _default_compute()
-    if req.threads is not None:
-        _comp["threads"] = max(1, int(req.threads))
-    if req.parallel_jobs is not None:
-        _comp["parallel_jobs"] = max(1, int(req.parallel_jobs))
+    if req.total_threads is not None:
+        _comp["total_threads"] = max(1, int(req.total_threads))
 
     meta = {
         "id": pid,
@@ -260,13 +256,10 @@ async def update_project(project_id: str, req: UpdateProjectRequest,
         if req.reference_gtf and not Path(req.reference_gtf).exists():
             raise HTTPException(400, f"GTF 不存在")
         meta["reference_gtf"] = req.reference_gtf or None
-    # 计算资源(项目设置页可改)
-    if req.threads is not None or req.parallel_jobs is not None:
+    # 计算资源(项目设置页可改):只有总线程预算
+    if req.total_threads is not None:
         meta.setdefault("compute", _default_compute())
-        if req.threads is not None:
-            meta["compute"]["threads"] = max(1, int(req.threads))
-        if req.parallel_jobs is not None:
-            meta["compute"]["parallel_jobs"] = max(1, int(req.parallel_jobs))
+        meta["compute"]["total_threads"] = max(1, int(req.total_threads))
     meta["updated_at"] = _now()
     _save(pdir, meta)
     return meta
@@ -727,11 +720,10 @@ def _pdir(request: Request, project_id: str) -> Path:
 
 
 def _default_compute() -> dict:
-    """计算资源默认值:单任务核数 = max(2, nproc-2);并发任务数 = 2。
+    """计算资源默认值:总线程预算 = 本机逻辑核心数。
 
-    threads      —— 单个任务用多少核(per-task);各步可在高级参数里覆盖。
-    parallel_jobs —— 同时跑几个任务。
-    二者由模块的调度器据此分配,保证"显示=实际"。
+    total_threads —— 该项目允许同时占用的 CPU 线程总量。运行时若并行跑多个
+    任务,这个预算会被均分给各并行任务(并行度是全局设置,见 Settings)。
     """
     import os
     try:
@@ -739,17 +731,28 @@ def _default_compute() -> dict:
             else (os.cpu_count() or 4)
     except Exception:
         n = os.cpu_count() or 4
-    return {"threads": max(2, n - 2), "parallel_jobs": 2}
+    return {"total_threads": max(1, n)}
 
 
 def _migrate(meta: dict) -> dict:
-    """老项目自动补字段(打开/列出时调用,不弹窗)。"""
-    if "compute" not in meta or not isinstance(meta.get("compute"), dict):
-        meta["compute"] = _default_compute()
-    else:
-        d = _default_compute()
-        meta["compute"].setdefault("threads", d["threads"])
-        meta["compute"].setdefault("parallel_jobs", d["parallel_jobs"])
+    """老项目自动补字段(打开/列出时调用,不弹窗)。
+
+    旧 compute 是 {threads(单任务), parallel_jobs(并发)};新模型只保留
+    total_threads(总线程预算)。迁移时把旧的"单任务核数 × 并发数"当作用户
+    当初想占用的总核数。
+    """
+    d = _default_compute()
+    comp = meta.get("compute")
+    if not isinstance(comp, dict):
+        meta["compute"] = dict(d)
+        return meta
+    if "total_threads" not in comp:
+        old_t = int(comp.get("threads", 0) or 0)
+        old_p = int(comp.get("parallel_jobs", 0) or 0)
+        comp["total_threads"] = max(1, old_t * max(1, old_p)) if old_t > 0 else d["total_threads"]
+    # 清掉旧字段(下次保存即落盘)
+    comp.pop("threads", None)
+    comp.pop("parallel_jobs", None)
     return meta
 
 

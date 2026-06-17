@@ -25,8 +25,7 @@ export async function getBackendPort(): Promise<number | null> {
 // ─────────────────────────────────────────────────────────────────────
 
 export interface ProjectCompute {
-  threads: number;        // 单任务核数
-  parallel_jobs: number;  // 并发任务数
+  total_threads: number;  // 该项目可用的总线程预算
 }
 
 export interface Project {
@@ -90,8 +89,7 @@ export const coreApi = {
     workdir: string;
     reference_fasta?: string;
     reference_gtf_or_gff?: string;
-    threads?: number;
-    parallel_jobs?: number;
+    total_threads?: number;
   }) => call<Project>("POST", "/projects/", args),
 
   getProject: (id: string) => call<Project>("GET", `/projects/${id}`),
@@ -103,8 +101,7 @@ export const coreApi = {
       description?: string;
       reference_fasta?: string;
       reference_gtf?: string;
-      threads?: number;
-      parallel_jobs?: number;
+      total_threads?: number;
     }
   ) => call<Project>("PATCH", `/projects/${id}`, args),
 

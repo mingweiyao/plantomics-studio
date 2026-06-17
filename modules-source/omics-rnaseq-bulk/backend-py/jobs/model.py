@@ -42,16 +42,21 @@ class JobKind(str, Enum):
     SRA_DOWNLOAD = "sra_download"
     SRA_EXTRACT = "sra_extract"     # 只解压本地 .sra 文件,不下载
     FASTQC = "fastqc"
+    FASTQC_RAW = "fastqc_raw"          # 过滤前质控(独立步骤)
+    FASTQC_TRIMMED = "fastqc_trimmed"  # 过滤后质控(独立步骤)
     FASTP = "fastp"
     STAR_ALIGN = "star_align"
     STAR_INDEX = "star_index"
     FEATURE_COUNTS = "feature_counts"
     MERGE_COUNTS = "merge_counts"   # 合并多个单样本 counts 文件
     NORMALIZE = "normalize"
+    DATA_VOLUME_STATS = "data_volume_stats"  # 测序数据量统计(解析 fastp JSON,报告 5.1.1)
+    ALIGN_STATS = "align_stats"              # 比对率统计(解析 STAR Log.final.out,报告 5.2.1)
     LIBRARY_QC = "library_qc"   # Qualimap 文库质量评估(覆盖/来源/饱和度)
     NEW_TRANSCRIPTS = "new_transcripts"  # StringTie 新转录本
+    TRANSDECODER = "transdecoder"        # 新转录本编码区预测(TransDecoder,报告 5.3.1)
     ALT_SPLICING = "alt_splicing"        # rMATS 可变剪接
-    LNCRNA = "lncrna"                    # lncRNA 预测(编码潜能)
+    LNCRNA = "lncrna"                    # lncRNA 预测(CPC2 + PLEK,报告 5.5.1)
     # ─── 一键运行 ───
     PIPELINE_UPSTREAM = "pipeline_upstream"
     # 注:下游分析(差异/富集/WGCNA/绘图/物种库)已迁到 omics-analysis 模块
@@ -71,6 +76,10 @@ class JobProgress:
     # 心跳时间戳(ISO8601 UTC)。长任务即使 pct 不变也会定期刷新它,
     # 前端可据此判断"任务还活着"。
     heartbeat: str = ""
+    # 一键流程当前所处的"流程节点 id"(如 sra / fastqc_raw / fastp / star_index ...)。
+    # 由编排器在每步前显式设置,子 runner 继承同一个值;前端据此精确高亮"正在跑哪一步",
+    # 不再靠解析 stage 文字猜,避免动画错位/消失。单步运行时为空,不影响。
+    step: str = ""
 
 
 @dataclass

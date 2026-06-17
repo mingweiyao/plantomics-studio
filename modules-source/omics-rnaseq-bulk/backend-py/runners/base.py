@@ -63,6 +63,8 @@ class BaseRunner(ABC):
         self._thread_quota: Optional[int] = (
             max(1, int(env_q)) if env_q and env_q.isdigit() else None
         )
+        # 一键流程当前节点 id(编排器设,子 runner 继承);单步跑时为空。
+        self._pipeline_step: str = ""
     
     @abstractmethod
     def run(self):
@@ -88,6 +90,7 @@ class BaseRunner(ABC):
             pct=actual, stage=stage, detail=detail,
             indeterminate=bool(indeterminate),
             heartbeat=_now_iso(),
+            step=self._pipeline_step,
         )
         save_job(self.data_dir, self.job)
 
@@ -111,19 +114,35 @@ class BaseRunner(ABC):
         self._pct_base, self._pct_span = old
 
     # ── CPU 配额 ────────────────────────────────
-    # 线程模型(项目级 compute):
-    #   project.compute.threads      = 单任务核数(per-task,显式传进每个 job 的 threads 参数)
-    #   project.compute.parallel_jobs = 同时跑几个任务(= JobManager.max_concurrent)
-    # 因此"单任务线程数"是用户在项目里显式设的值,runner 必须如实使用,
-    # 不再用"总预算 ÷ 并行数"去二次切分(那会把用户设的值改小)。
-    # 这两个方法保留接口、改为如实透传;真正的并发上限由 parallel_jobs 控制。
+    # 线程模型(总线程预算 ÷ 并行度):
+    #   项目只设"总线程预算 B"(project.compute.total_threads);
+    #   并行度 P 是运行时的全局设置(JobManager.max_concurrent);
+    #   JobManager 启动每个 runner 前,把"本任务配额 = B // P"通过环境变量
+    #   PLANTOMICS_JOB_THREADS 注入(见 jobs/resources.py),即 self._thread_quota。
+    # 这两个方法据此把工具线程数 clamp 到配额内,保证全机器不超额订阅。
+    # 没注入配额时(单测 / 直接命令行跑)按调用方给的默认值走。
     def effective_threads(self, requested: int) -> int:
-        """单进程多线程工具的线程数 = 项目设定的单任务核数,如实使用。"""
+        """单进程多线程工具的线程数。
+
+        有注入配额时一律用配额(总预算已按并行度切好);否则用调用方给的值。
+        """
+        if self._thread_quota is not None:
+            return max(1, self._thread_quota)
         return max(1, int(requested))
 
     def effective_parallel_alloc(self, requested_parallel: int,
                                  requested_threads_per: int) -> tuple[int, int]:
-        """多样本并行工具:按调用方给的值透传(默认调用方已用项目 compute 设好)。"""
+        """多样本并行工具:把本任务配额再切给并行的样本子进程。
+
+        有注入配额 q 时:并行样本数 = min(requested_parallel, q),
+        每样本线程 = max(1, q // 并行样本数),保证 样本数 × 每样本线程 ≤ q。
+        没配额时按调用方给的值透传。
+        """
+        if self._thread_quota is not None:
+            q = max(1, self._thread_quota)
+            workers = max(1, min(int(requested_parallel), q))
+            per = max(1, q // workers)
+            return workers, per
         return max(1, int(requested_parallel)), max(1, int(requested_threads_per))
 
     def heartbeat(self, stage: str = "", detail: str = "",
@@ -142,6 +161,7 @@ class BaseRunner(ABC):
             detail=detail or cur.detail,
             indeterminate=indeterminate,
             heartbeat=_now_iso(),
+            step=self._pipeline_step or getattr(cur, "step", ""),
         )
         save_job(self.data_dir, self.job)
     
@@ -176,9 +196,9 @@ class BaseRunner(ABC):
         cmd_str = ' '.join(str(c) for c in cmd)
         self.log(f"$ {cmd_str}")
 
-        if indeterminate:
-            # 进入长步骤:先打一拍心跳,前端立刻切到流动动画
-            self.heartbeat(stage=heartbeat_stage, indeterminate=True)
+        # 进入命令先打一拍心跳:长步骤切流动动画;普通步骤也刷新一下,
+        # 让前端立刻拿到"当前在跑哪一步(step)"并保持刷新,长命令期间不至于一直冻着。
+        self.heartbeat(stage=heartbeat_stage, indeterminate=indeterminate)
         import time as _time
         last_beat = _time.monotonic()
         HEARTBEAT_EVERY = 3.0  # 秒

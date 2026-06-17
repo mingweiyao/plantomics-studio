@@ -75,8 +75,11 @@ export function NewProject() {
   const [workdir, setWorkdir] = useState("");
   const [refFasta, setRefFasta] = useState("");
   const [refAnnotation, setRefAnnotation] = useState("");
-  const [threads, setThreads] = useState<number>(8);
-  const [parallelJobs, setParallelJobs] = useState<number>(2);
+  const [totalThreads, setTotalThreads] = useState<number>(
+    typeof navigator !== "undefined" && navigator.hardwareConcurrency
+      ? navigator.hardwareConcurrency
+      : 8
+  );
   const [error, setError] = useState<string | null>(null);
   const [draftBanner, setDraftBanner] = useState<Draft | null>(null);
 
@@ -109,8 +112,7 @@ export function NewProject() {
         workdir: workdir.trim(),
         reference_fasta: refFasta.trim() || undefined,
         reference_gtf_or_gff: refAnnotation.trim() || undefined,
-        threads,
-        parallel_jobs: parallelJobs,
+        total_threads: totalThreads,
       }),
     onSuccess: (project) => {
       clearDraft();
@@ -344,37 +346,22 @@ export function NewProject() {
               <div className="text-xs font-medium text-ink-muted mb-2">
                 计算资源
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <Field
-                  label="单任务线程数"
-                  hint="每个分析任务(如 STAR 比对)用多少 CPU 核"
-                >
-                  <Input
-                    type="number"
-                    min={1}
-                    value={threads}
-                    onChange={(e) =>
-                      setThreads(Math.max(1, parseInt(e.target.value) || 1))
-                    }
-                  />
-                </Field>
-                <Field
-                  label="并行任务数"
-                  hint="同时运行几个任务。单任务线程 × 并行任务数 ≈ 总占用核数"
-                >
-                  <Input
-                    type="number"
-                    min={1}
-                    value={parallelJobs}
-                    onChange={(e) =>
-                      setParallelJobs(Math.max(1, parseInt(e.target.value) || 1))
-                    }
-                  />
-                </Field>
-              </div>
+              <Field
+                label="总线程预算"
+                hint="这个项目最多占用多少 CPU 线程。运行时若并行跑多个任务,这个预算会按并行度均分给各任务。"
+              >
+                <Input
+                  type="number"
+                  min={1}
+                  value={totalThreads}
+                  onChange={(e) =>
+                    setTotalThreads(Math.max(1, parseInt(e.target.value) || 1))
+                  }
+                />
+              </Field>
               <div className="text-[11px] text-ink-faint mt-1.5">
-                建议总核数留 1–2 个给系统。这两项之后可在项目设置里修改;
-                各分析步骤也能在「高级参数」里单独覆盖线程数。
+                建议比本机逻辑核心数少留 1–2 个给系统。之后可在项目设置里修改;
+                「同时运行几个任务」是全局设置(在「设置」里调,默认 1)。
               </div>
             </div>
           </div>

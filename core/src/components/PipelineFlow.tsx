@@ -1,25 +1,37 @@
 /**
- * 圆形数据处理流程图 —— 组学模块首页的视觉核心。
+ * 数据处理流程时间线 —— 组学模块上游页的视觉核心。
  *
- * 六个数据处理步骤围成一圈(SRA→质控→过滤→比对→定量→标准化),
- * 圆心是"一键运行"。每个步骤 5 种状态:
- *   未配置(灰) / 已配置(蓝) / 运行中(主色 + 呼吸光环) / 完成(绿✓) / 失败(红✗)。
- * 点击步骤 → onSelectStep(进入该步参数);圆心按钮 → onRunAll(一键跑到标准化)。
+ * 纵向时间线:每个步骤一行,左侧状态节点 + 连接线串成顺序,右侧是可点击的步骤卡。
+ * 步骤分两组:核心流程(默认勾选)与高级分析(可选)。
+ * 每步 5 种状态:未运行 / 已配置 / 运行中(脉冲)/ 已完成 / 失败。
+ *   - 点步骤卡   → onSelectStep(打开该步参数抽屉)
+ *   - 顶部「一键运行」→ onRunAll(按勾选顺序执行核心流程)
+ *   - 步骤卡上的勾选框 / 子选项 → onToggleSelect(决定一键运行跑哪些)
  *
  * 纯展示组件,状态由父组件传入(由 upstream_params + 任务状态推导)。
  */
 import type { LucideIcon } from "lucide-react";
 import type { CSSProperties } from "react";
-import { Play, Check, X, Loader2 } from "lucide-react";
+import { Play, Check, X, Loader2, ChevronRight } from "lucide-react";
 
 export type StepStatus = "pending" | "configured" | "running" | "done" | "failed";
 
+export interface FlowSubOption {
+  id: string; // 与 selected 集合里的键一致
+  label: string;
+}
+
 export interface FlowStep {
-  id: string;
+  id: string; // 节点唯一 id(也用于 activeId / 打开抽屉)
   label: string;
   sublabel?: string;
   icon: LucideIcon;
   status: StepStatus;
+  group?: "core" | "advanced";
+  selectKey?: string; // 勾选框对应 selected 里的键(默认 = id)
+  selectable?: boolean; // false = 自动步骤,不显示勾选框(如建索引随比对自动跑)
+  subOptions?: FlowSubOption[]; // 卡内的子开关(如数据量统计 / 比对统计)
+  note?: string; // 卡下方的小提示
 }
 
 interface PipelineFlowProps {
@@ -29,25 +41,62 @@ interface PipelineFlowProps {
   onRunAll: () => void;
   running?: boolean;
   canRun?: boolean;
-  // 若提供 selected + onToggleSelect,则每个节点带勾选框,圆心只跑勾选的步骤
   selected?: Set<string>;
-  onToggleSelect?: (id: string) => void;
+  onToggleSelect?: (key: string) => void;
 }
 
 const STATUS_LABEL: Record<StepStatus, string> = {
-  pending: "未配置",
+  pending: "未运行",
   configured: "已配置",
   running: "运行中",
   done: "已完成",
   failed: "失败",
 };
 
-// 每个状态的主色(CSS 变量,light/dark 自动切换)
+const GROUP_LABEL: Record<string, string> = {
+  core: "核心流程",
+  advanced: "高级分析 · 可选",
+};
+
 function statusColor(s: StepStatus): string {
   return `rgb(var(--state-${s}))`;
 }
 
-const RADIUS_PCT = 39; // 节点到圆心的半径(占容器宽度百分比)
+function StatusDot({ status }: { status: StepStatus }) {
+  const c = statusColor(status);
+  const base = "relative z-10 flex h-6 w-6 items-center justify-center rounded-full";
+  if (status === "running")
+    return (
+      <span className={`${base} flow-node-running text-white`} style={{ backgroundColor: c }}>
+        <Loader2 size={13} className="animate-spin" />
+      </span>
+    );
+  if (status === "done")
+    return (
+      <span className={`${base} text-white`} style={{ backgroundColor: c }}>
+        <Check size={13} strokeWidth={3} />
+      </span>
+    );
+  if (status === "failed")
+    return (
+      <span className={`${base} text-white`} style={{ backgroundColor: c }}>
+        <X size={13} strokeWidth={3} />
+      </span>
+    );
+  if (status === "configured")
+    return (
+      <span
+        className={base}
+        style={{
+          backgroundColor: `color-mix(in srgb, ${c} 22%, rgb(var(--bg-surface)))`,
+          border: `2px solid ${c}`,
+        }}
+      />
+    );
+  return (
+    <span className={`${base} bg-bg-surface`} style={{ border: "2px solid rgb(var(--border))" }} />
+  );
+}
 
 export function PipelineFlow({
   steps,
@@ -59,188 +108,205 @@ export function PipelineFlow({
   selected,
   onToggleSelect,
 }: PipelineFlowProps) {
-  const n = steps.length;
-  const doneCount = steps.filter((s) => s.status === "done").length;
-  const frac = n > 0 ? doneCount / n : 0;
-
-  // 圆心进度环
-  const R = 15.5;
-  const C = 2 * Math.PI * R;
+  const core = steps.filter((s) => (s.group ?? "core") === "core");
+  const total = core.length;
+  const doneCount = core.filter((s) => s.status === "done").length;
+  const frac = total > 0 ? doneCount / total : 0;
 
   return (
-    <div className="relative mx-auto aspect-square w-full max-w-[540px] select-none">
-      {/* 背景光晕 */}
-      <div
-        className="pointer-events-none absolute inset-[12%] rounded-full opacity-60"
-        style={{
-          background:
-            "radial-gradient(circle at 50% 45%, rgb(var(--accent-soft)) 0%, transparent 70%)",
-        }}
-      />
-
-      {/* 轨道环 + 圆心进度环 */}
-      <svg viewBox="0 0 100 100" className="pointer-events-none absolute inset-0 h-full w-full">
-        {/* 步骤轨道(虚线圆;运行时流动) */}
-        <circle
-          cx="50"
-          cy="50"
-          r={RADIUS_PCT}
-          fill="none"
-          stroke="rgb(var(--border))"
-          strokeWidth="0.5"
-          strokeDasharray="2 2.4"
-          className={running ? "flow-orbit-active" : ""}
-        />
-        {/* 圆心进度底环 */}
-        <circle cx="50" cy="50" r={R} fill="none" stroke="rgb(var(--bg-muted))" strokeWidth="2.4" />
-        {/* 圆心进度值环 */}
-        <circle
-          cx="50"
-          cy="50"
-          r={R}
-          fill="none"
-          stroke="rgb(var(--accent))"
-          strokeWidth="2.4"
-          strokeLinecap="round"
-          strokeDasharray={C}
-          strokeDashoffset={C * (1 - frac)}
-          transform="rotate(-90 50 50)"
-          style={{ transition: "stroke-dashoffset .5s ease" }}
-        />
-      </svg>
-
-      {/* 圆心:一键运行 */}
-      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-        <button
-          onClick={onRunAll}
-          disabled={!canRun || running}
-          title={canRun ? "一键跑到标准化" : "请先在项目里配置参考基因组(GTF)"}
-          className="flow-node flex h-[112px] w-[112px] flex-col items-center justify-center rounded-full bg-bg-surface shadow-pop ring-1 ring-border disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <span
-            className="mb-1 flex h-9 w-9 items-center justify-center rounded-full"
-            style={{ backgroundColor: statusColor(running ? "running" : "done"), color: "white" }}
+    <div className="mx-auto w-full max-w-[680px] select-none">
+      {/* 顶部:标题 + 一键运行 + 进度 */}
+      <div className="rounded-2xl border border-border bg-bg-surface p-4 shadow-card sm:p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-faint">
+              数据处理流程
+            </div>
+            <div className="mt-1 text-[13px] text-ink-muted">
+              点步骤可单独配置 / 运行;勾选后「一键运行」按顺序执行
+            </div>
+          </div>
+          <button
+            onClick={onRunAll}
+            disabled={!canRun || running}
+            title={canRun ? "按勾选顺序执行核心流程" : "请先在项目里配置参考基因组(GTF)并至少勾选一步"}
+            className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-pop transition hover:brightness-105 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {running ? (
-              <Loader2 size={18} className="animate-spin" />
-            ) : (
-              <Play size={18} className="ml-0.5" />
-            )}
-          </span>
-          <span className="text-[13px] font-semibold text-ink">
-            {running ? "运行中" : "一键运行"}
-          </span>
-          <span className="text-[10px] text-ink-faint">
-            {doneCount}/{n} 步完成
-          </span>
-        </button>
+            {running ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} className="ml-0.5" />}
+            {running ? "运行中…" : "一键运行"}
+          </button>
+        </div>
+        <div className="mt-3.5 flex items-center gap-3">
+          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-bg-muted">
+            <div
+              className="h-full rounded-full bg-accent transition-[width] duration-500"
+              style={{ width: `${Math.round(frac * 100)}%` }}
+            />
+          </div>
+          <div className="shrink-0 text-xs font-medium tabular-nums text-ink-muted">
+            {doneCount}/{total} 步完成
+          </div>
+        </div>
       </div>
 
-      {/* 六个步骤节点 */}
-      {steps.map((step, i) => {
-        const angle = (-90 + (360 / n) * i) * (Math.PI / 180);
-        const x = 50 + RADIUS_PCT * Math.cos(angle);
-        const y = 50 + RADIUS_PCT * Math.sin(angle);
-        const color = statusColor(step.status);
-        const active = step.id === activeId;
-        const sel = !selected || selected.has(step.id);
-        const Icon = step.icon;
-        return (
-          <div
-            key={step.id}
-            className="absolute"
-            style={{ left: `${x}%`, top: `${y}%`, transform: "translate(-50%,-50%)" }}
-          >
-            <button
-              onClick={() => onSelectStep(step.id)}
-              className={`flow-node group relative flex w-[92px] flex-col items-center gap-1.5 rounded-2xl px-2 py-2.5 transition-opacity ${
-                active ? "bg-bg-surface shadow-pop ring-2" : "bg-bg-surface/80 shadow-card ring-1 ring-border hover:ring-border"
-              } ${selected && !sel ? "opacity-40" : ""}`}
-              style={active ? ({ ["--tw-ring-color" as any]: color } as CSSProperties) : undefined}
-            >
-              {/* 步骤序号 */}
-              <span className="absolute -left-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-bg-base text-[10px] font-semibold text-ink-faint ring-1 ring-border">
-                {i + 1}
-              </span>
+      {/* 时间线 */}
+      <div className="mt-3">
+        {steps.map((step, i) => {
+          const prev = steps[i - 1];
+          const next = steps[i + 1];
+          const showGroup = (step.group ?? "core") !== (prev?.group ?? (i === 0 ? null : "core"));
+          const isLastInGroup = !next || (next.group ?? "core") !== (step.group ?? "core");
+          const c = statusColor(step.status);
+          const active = step.id === activeId;
+          const Icon = step.icon;
+          const key = step.selectKey ?? step.id;
+          const sel = !selected || selected.has(key);
+          const lineDone = step.status === "done";
+          const canSelect = step.selectable !== false && !!onToggleSelect;
 
-              {/* 勾选框(选不选进一键运行) */}
-              {onToggleSelect && (
-                <span
-                  role="checkbox"
-                  aria-checked={sel}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleSelect(step.id);
-                  }}
-                  className="absolute -right-1.5 -top-1.5 z-10 flex h-5 w-5 cursor-pointer items-center justify-center rounded-full bg-bg-base text-[11px] font-bold leading-none ring-1 transition hover:ring-accent"
-                  style={{
-                    color: sel ? color : "rgb(var(--ink-faint))",
-                    ["--tw-ring-color" as any]: sel ? color : "rgb(var(--border))",
-                  }}
-                  title={sel ? "已选入一键运行(点击取消)" : "未选(点击加入一键运行)"}
+          return (
+            <div key={step.id}>
+              {showGroup && (
+                <div
+                  className={`mb-1.5 ml-10 text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-faint ${
+                    i === 0 ? "" : "mt-4"
+                  }`}
                 >
-                  {sel ? "✓" : ""}
-                </span>
+                  {GROUP_LABEL[step.group ?? "core"]}
+                </div>
               )}
+              <div className="relative flex gap-3 pb-3 last:pb-0">
+                {/* 左侧轨道:连接线 + 状态节点 */}
+                <div className="relative w-7 shrink-0">
+                  {!isLastInGroup && (
+                    <span
+                      className="absolute left-1/2 top-3 -bottom-3 w-[2px] -translate-x-1/2 rounded"
+                      style={{
+                        background: lineDone ? "rgb(var(--accent))" : "rgb(var(--border))",
+                      }}
+                    />
+                  )}
+                  <StatusDot status={step.status} />
+                </div>
 
-              {/* 图标圆环(按状态着色) */}
-              <span
-                className={`relative flex h-12 w-12 items-center justify-center rounded-full ${
-                  step.status === "running" ? "flow-node-running" : ""
-                }`}
-                style={{
-                  color,
-                  backgroundColor:
-                    step.status === "pending"
-                      ? "rgb(var(--bg-muted))"
-                      : `color-mix(in srgb, ${color} 14%, rgb(var(--bg-surface)))`,
-                  border: `1.5px ${step.status === "pending" ? "dashed" : "solid"} ${color}`,
-                }}
-              >
-                <Icon size={20} />
-                {/* 状态角标 */}
-                {step.status === "done" && (
-                  <span
-                    className="absolute -bottom-1 -right-1 flex h-[18px] w-[18px] items-center justify-center rounded-full text-white"
-                    style={{ backgroundColor: statusColor("done") }}
-                  >
-                    <Check size={11} strokeWidth={3} />
-                  </span>
-                )}
-                {step.status === "failed" && (
-                  <span
-                    className="absolute -bottom-1 -right-1 flex h-[18px] w-[18px] items-center justify-center rounded-full text-white"
-                    style={{ backgroundColor: statusColor("failed") }}
-                  >
-                    <X size={11} strokeWidth={3} />
-                  </span>
-                )}
-                {step.status === "running" && (
-                  <span
-                    className="absolute -bottom-1 -right-1 flex h-[18px] w-[18px] items-center justify-center rounded-full text-white"
-                    style={{ backgroundColor: statusColor("running") }}
-                  >
-                    <Loader2 size={11} className="animate-spin" />
-                  </span>
-                )}
-              </span>
+                {/* 步骤卡 */}
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onSelectStep(step.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onSelectStep(step.id);
+                    }
+                  }}
+                  className={`-mt-0.5 flex-1 cursor-pointer rounded-xl border bg-bg-surface px-3.5 py-3 shadow-card outline-none transition focus-visible:ring-2 ${
+                    active ? "ring-2" : "border-border hover:shadow-pop"
+                  }`}
+                  style={
+                    active
+                      ? ({ borderColor: c, ["--tw-ring-color" as any]: c } as CSSProperties)
+                      : ({ ["--tw-ring-color" as any]: "rgb(var(--accent))" } as CSSProperties)
+                  }
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-bg-muted text-[12px] font-semibold tabular-nums text-ink-muted">
+                      {i + 1}
+                    </span>
+                    <span
+                      className="grid h-9 w-9 shrink-0 place-items-center rounded-lg"
+                      style={{
+                        color: c,
+                        backgroundColor: `color-mix(in srgb, ${c} 12%, rgb(var(--bg-surface)))`,
+                      }}
+                    >
+                      <Icon size={18} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-semibold text-ink">{step.label}</div>
+                      {step.sublabel && (
+                        <div className="truncate text-[11px] text-ink-faint">{step.sublabel}</div>
+                      )}
+                    </div>
+                    <span
+                      className="hidden shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium sm:inline-block"
+                      style={{ color: c, backgroundColor: `color-mix(in srgb, ${c} 12%, transparent)` }}
+                    >
+                      {STATUS_LABEL[step.status]}
+                    </span>
+                    {canSelect ? (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onToggleSelect!(key);
+                        }}
+                        aria-pressed={sel}
+                        title={sel ? "已选入一键运行(点击取消)" : "未选入一键运行(点击加入)"}
+                        className="grid h-5 w-5 shrink-0 place-items-center rounded-md border text-white transition"
+                        style={{
+                          borderColor: sel ? c : "rgb(var(--border))",
+                          backgroundColor: sel ? c : "transparent",
+                        }}
+                      >
+                        {sel && <Check size={12} strokeWidth={3} />}
+                      </button>
+                    ) : (
+                      <span
+                        className="shrink-0 rounded-md bg-bg-muted px-1.5 py-0.5 text-[10px] font-medium text-ink-faint"
+                        title="随比对自动执行,已存在则跳过"
+                      >
+                        自动
+                      </span>
+                    )}
+                    <ChevronRight size={16} className="shrink-0 text-ink-faint" />
+                  </div>
 
-              {/* 文本 */}
-              <span className="text-center leading-tight">
-                <span className="block text-[12px] font-medium text-ink">{step.label}</span>
-                {step.sublabel && (
-                  <span className="block text-[10px] text-ink-faint">{step.sublabel}</span>
-                )}
-              </span>
+                  {/* 子选项(如 数据量统计 / 比对统计) */}
+                  {step.subOptions && step.subOptions.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5 pl-[68px]">
+                      {step.subOptions.map((opt) => {
+                        const on = !selected || selected.has(opt.id);
+                        const ac = "rgb(var(--accent))";
+                        return (
+                          <button
+                            key={opt.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onToggleSelect && onToggleSelect(opt.id);
+                            }}
+                            aria-pressed={on}
+                            className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] transition"
+                            style={{
+                              borderColor: on ? ac : "rgb(var(--border))",
+                              color: on ? ac : "rgb(var(--ink-muted))",
+                              backgroundColor: on ? `color-mix(in srgb, ${ac} 10%, transparent)` : "transparent",
+                            }}
+                          >
+                            <span
+                              className="grid h-3 w-3 place-items-center rounded-[3px]"
+                              style={{
+                                backgroundColor: on ? ac : "transparent",
+                                border: on ? "none" : "1px solid rgb(var(--border))",
+                              }}
+                            >
+                              {on && <Check size={9} strokeWidth={4} className="text-white" />}
+                            </span>
+                            {opt.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
 
-              {/* 状态文字 */}
-              <span className="text-[10px] font-medium" style={{ color }}>
-                {STATUS_LABEL[step.status]}
-              </span>
-            </button>
-          </div>
-        );
-      })}
+                  {step.note && (
+                    <div className="mt-1.5 pl-[68px] text-[11px] text-ink-faint">{step.note}</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

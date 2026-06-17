@@ -225,15 +225,13 @@ function CompactJobRow({
         {isRunning && (
           <div className="mt-1">
             <div className="relative h-0.5 bg-bg-muted rounded overflow-hidden">
-              {job.progress.indeterminate ? (
-                // 长步骤:来回滑动的高亮带,证明任务在跑(不卡死)
-                <div className="progress-indeterminate" />
-              ) : (
-                <div
-                  className="h-full bg-accent transition-all"
-                  style={{ width: `${job.progress.pct}%` }}
-                />
-              )}
+              {/* 指示性进度填充:平滑过渡。长步骤里 pct 不变也没关系,下面的微光一直在动。 */}
+              <div
+                className="absolute inset-y-0 left-0 bg-accent transition-[width] duration-500"
+                style={{ width: `${Math.max(6, Math.min(100, job.progress.pct || 0))}%` }}
+              />
+              {/* 持续滑动的微光:只要在跑就一直动,不随 indeterminate 开关忽闪 */}
+              <span className="progress-sheen" />
             </div>
             <div className="text-[10px] text-ink-faint mt-0.5 truncate">
               {job.progress.stage}

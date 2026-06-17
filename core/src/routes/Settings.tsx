@@ -2,7 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { coreApi } from "../lib/api";
-import { PageHeader, Card, Loading } from "../components/ui";
+import { getGlobalConcurrency, setGlobalConcurrency } from "../lib/rnaseqApi";
+import { PageHeader, Card, Loading, Field, Input } from "../components/ui";
 
 export function Settings() {
   const { data: info, isLoading } = useQuery({
@@ -16,6 +17,8 @@ export function Settings() {
       .then(setBackendPort)
       .catch(() => setBackendPort(null));
   }, []);
+
+  const [concurrency, setConcurrency] = useState<number>(getGlobalConcurrency());
 
   return (
     <div className="p-6 max-w-3xl">
@@ -48,10 +51,34 @@ export function Settings() {
           </Card>
 
           <Card>
+            <div className="text-sm font-medium mb-3">计算资源(全局)</div>
+            <Field
+              label="同时运行任务数"
+              hint="最多同时跑几个任务。每个任务实际用到的线程 = 该项目的总线程预算 ÷ 这个并行度。默认 1(每个任务用满项目预算);想并行才调大。"
+            >
+              <Input
+                type="number"
+                min={1}
+                value={concurrency}
+                onChange={(e) => {
+                  const n = Math.max(1, parseInt(e.target.value) || 1);
+                  setConcurrency(n);
+                  setGlobalConcurrency(n);
+                }}
+                className="w-32"
+              />
+            </Field>
+            <div className="text-[11px] text-ink-faint mt-1.5">
+              全局设置,对所有项目生效;下次进入分析页时同步给后端调度器。
+            </div>
+          </Card>
+
+          <Card>
             <div className="text-sm font-medium mb-3">关于</div>
             <div className="text-xs text-ink-muted leading-relaxed">
               PlantOmics Studio 是一个模块化的植物组学分析平台。主程序提供项目和资源管理,
-              具体的分析能力通过安装模块获得。计算资源(线程数、并行任务数)在创建项目时设置。
+              具体的分析能力通过安装模块获得。每个项目在创建时设「总线程预算」,
+              「同时运行任务数」在此处全局设置。
             </div>
           </Card>
         </div>

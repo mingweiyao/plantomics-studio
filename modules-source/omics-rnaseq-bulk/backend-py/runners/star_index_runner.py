@@ -165,6 +165,7 @@ class StarIndexRunner(BaseRunner):
             return False
         return False
 
+    def _resolve_overhangs(self, raw, sample_fastq_dir: str):
         """把 raw(可以是 'auto'/单 int/list)解析成 list[int]。"""
         # 列表
         if isinstance(raw, list):

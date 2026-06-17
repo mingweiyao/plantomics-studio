@@ -62,6 +62,11 @@ export const analysisApi = {
     inputs: Record<string, string>;
     params: Record<string, any>;
   }) => m<{ id: string }>("/run", "POST", req),
+  job: (id: string) =>
+    m<{ id: string; status: string; progress?: { pct?: number; stage?: string }; output_path?: string; error?: string | null }>(
+      `/jobs/${id}`,
+      "GET"
+    ),
   create: (req: CreateAnalysisInput) =>
     m<AnalysisManifest>("/analyses-json", "POST", req),
   remove: (id: string) => m<{ ok: boolean }>(`/analyses/${id}`, "DELETE"),

@@ -39,7 +39,7 @@ import {
 import { coreApi } from "../lib/api";
 import { PipelineFlow, type FlowStep, type StepStatus } from "../components/PipelineFlow";
 import { Drawer } from "../components/Drawer";
-import { rnaseqApi, Job } from "../lib/rnaseqApi";
+import { rnaseqApi, Job, getGlobalConcurrency } from "../lib/rnaseqApi";
 import {
   PageHeader,
   Card,
@@ -57,67 +57,107 @@ import { extractError } from "../lib/errorMessage";
 type TabId =
   | "sra"
   | "fastqc"
+  | "fastqc_raw"
+  | "fastqc_trimmed"
   | "fastp"
+  | "data_volume_stats"
   | "star_index"
   | "star_align"
+  | "align_stats"
   | "feature_counts"
   | "normalize"
   | "library_qc"
   | "new_transcripts"
+  | "transdecoder"
   | "alt_splicing"
   | "lncrna";
 
 // 抽屉标题/图标用
 const STEP_META: Record<string, { label: string; sub?: string; icon: any }> = {
   sra: { label: "SRA / fastq 准备", icon: Download },
-  fastqc: { label: "质控", sub: "FastQC · 原始数据", icon: FileSearch },
+  fastqc: { label: "质控", sub: "FastQC", icon: FileSearch },
+  fastqc_raw: { label: "质控 · 原始", sub: "FastQC(过滤前)", icon: FileSearch },
+  fastqc_trimmed: { label: "质控 · 过滤后", sub: "FastQC(过滤后)", icon: FileSearch },
   fastp: { label: "过滤", sub: "fastp", icon: FilterIcon },
+  data_volume_stats: { label: "数据量统计", sub: "报告 5.1.1 · 解析 fastp", icon: BarChart3 },
   star_index: { label: "STAR 索引", icon: DatabaseIcon },
   star_align: { label: "比对", sub: "STAR", icon: GitBranch },
+  align_stats: { label: "比对率统计", sub: "报告 5.2.1 · 解析 STAR 日志", icon: BarChart3 },
   feature_counts: { label: "定量", sub: "featureCounts", icon: BarChart3 },
   normalize: { label: "标准化", sub: "TPM / FPKM / CPM", icon: TrendingUp },
   library_qc: { label: "文库质量评估", sub: "Qualimap", icon: FileSearch },
   new_transcripts: { label: "新转录本发现", sub: "StringTie + gffcompare", icon: GitBranch },
+  transdecoder: { label: "新转录本编码区预测", sub: "TransDecoder", icon: GitBranch },
   alt_splicing: { label: "可变剪接", sub: "rMATS", icon: FilterIcon },
-  lncrna: { label: "lncRNA 预测", sub: "FEELnc", icon: DatabaseIcon },
+  lncrna: { label: "lncRNA 预测", sub: "CPC2 + PLEK", icon: DatabaseIcon },
 };
 
-// 一键运行默认勾选的核心线性步骤(顺序即执行顺序)。高级分析(文库质控/新转录本/
-// lncRNA/可变剪接)也在圆环上、可勾选,但默认不勾,需要时再勾上一起跑。
-const CORE_STEP_IDS = ["sra", "fastqc", "fastp", "star_align", "feature_counts", "normalize"];
+// 一键运行默认勾选的标准流程步骤(顺序即执行顺序)。高级分析(新转录本/编码区预测/
+// 可变剪接/lncRNA)也在时间线上、可勾选,但默认不勾,需要时再勾上一起跑。
+const CORE_STEP_IDS = ["sra", "fastqc_raw", "fastp", "fastqc_trimmed", "data_volume_stats", "star_align", "align_stats", "feature_counts", "normalize"];
 
-// job.kind → 圆环步骤 id(一个步骤可能对应多个 kind)
+// job.kind → 时间线步骤键(一个步骤键可能对应多个 kind)
 const KIND_TO_STEP: Record<string, string> = {
   sra_download: "sra", sra_extract: "sra",
-  fastqc: "fastqc",
+  fastqc: "fastqc_raw",
+  fastqc_raw: "fastqc_raw",
+  fastqc_trimmed: "fastqc_trimmed",
   fastp: "fastp",
-  star_index: "star_align", star_align: "star_align",
+  data_volume_stats: "data_volume_stats",
+  star_index: "star_index", star_align: "star_align",
+  align_stats: "align_stats",
   feature_counts: "feature_counts", merge_counts: "feature_counts",
   normalize: "normalize",
   library_qc: "library_qc",
   new_transcripts: "new_transcripts",
+  transdecoder: "transdecoder",
   alt_splicing: "alt_splicing",
   lncrna: "lncrna",
 };
 
-// 步骤的规范先后顺序(一键运行进行中时用来判断"已跑过 / 正在跑 / 还没轮到")
-const STEP_ORDER = [
-  "sra", "fastqc", "fastp", "star_align", "feature_counts", "normalize",
-  "library_qc", "new_transcripts", "lncrna", "alt_splicing",
+// 时间线节点的先后顺序(一键运行进行中时用来判断"已跑过 / 正在跑 / 还没轮到")
+const NODE_ORDER = [
+  "sra", "fastqc_raw", "fastp", "fastqc_trimmed", "star_index", "star_align",
+  "feature_counts", "normalize", "new_transcripts", "transdecoder",
+  "alt_splicing", "lncrna",
 ];
+// 节点 → 它对应的"步骤键"(用于查单独任务状态、判断是否在本次一键运行里)
+const NODE_STEP_KEY: Record<string, string> = {};
 
 // 一键运行(pipeline_upstream)进行中,从 stage 文字猜当前在跑哪一步
 const PIPE_STAGE_KEYWORDS: [RegExp, string][] = [
   [/SRA/i, "sra"],
-  [/FastQC|质控/, "fastqc"],
+  [/过滤前|FastQC.*raw|raw.*FastQC/i, "fastqc_raw"],
+  [/过滤后|FastQC.*trimmed|trimmed.*FastQC/i, "fastqc_trimmed"],
+  [/数据量统计/, "fastqc_trimmed"],
   [/fastp|过滤/, "fastp"],
+  [/索引|STAR Index|overhang/i, "star_index"],
+  [/比对率统计|比对统计/, "star_align"],
   [/STAR|比对/, "star_align"],
   [/featureCounts|定量/, "feature_counts"],
   [/标准化/, "normalize"],
-  [/文库|Qualimap/i, "library_qc"],
+  [/TransDecoder|编码区/i, "transdecoder"],
   [/StringTie|新转录本/, "new_transcripts"],
-  [/lncRNA/i, "lncrna"],
+  [/lncRNA|CPC2|PLEK/i, "lncrna"],
   [/剪接|rMATS/i, "alt_splicing"],
+];
+
+// 编排器各步骤的"全局进度区间 → 节点"映射(和 pipeline_upstream_runner 里的 pct_start/pct_end 对齐)。
+// step / 关键字都没命中时,按真实区间精确定位当前节点;比"按节点数均分 pct"准得多
+// (均分会让 index/比对段的 pct 落到前面的节点上,导致后半段节点一直不点亮)。
+// 子步骤(数据量统计、比对统计、合并)并入其所属节点的区间。
+const PCT_NODE_BANDS: [number, number, string][] = [
+  [0, 8, "sra"],
+  [8, 13, "fastqc_raw"],
+  [13, 24, "fastp"],
+  [24, 31, "fastqc_trimmed"],
+  [31, 44, "star_index"],
+  [44, 71, "star_align"],
+  [71, 86, "feature_counts"],
+  [86, 92, "normalize"],
+  [92, 95, "new_transcripts"],
+  [95, 97, "transdecoder"],
+  [97, 101, "lncrna"],
 ];
 
 export function Upstream() {
@@ -148,7 +188,7 @@ export function Upstream() {
     enabled: !!projectId,
   });
 
-  // 任务列表(驱动圆环节点的"运行中/已完成/失败"状态);跑着的时候轮询刷新
+  // 任务列表(驱动时间线节点的"运行中/已完成/失败"状态);跑着的时候轮询刷新
   const { data: jobsData } = useQuery({
     queryKey: ["jobs", projectId],
     queryFn: () => rnaseqApi.listJobs(projectId!),
@@ -157,8 +197,18 @@ export function Upstream() {
   });
 
   const qc = useQueryClient();
+
+  // 把本项目的"总线程预算"+ 全局并行度同步给模块调度器(显示=实际的关键)。
+  // 之前项目里设的线程从没传给后端,所以"设了不生效";这里在打开项目时推过去。
+  useEffect(() => {
+    const total = project?.compute?.total_threads;
+    if (total && total > 0) {
+      rnaseqApi.setConcurrency(getGlobalConcurrency(), total).catch(() => {});
+    }
+  }, [project?.compute?.total_threads]);
+
   const [pipeResult, setPipeResult] = useState<{ ok: boolean; message: string } | null>(null);
-  // 一键运行:只跑圆环上勾选的步骤,线程用项目级计算资源
+  // 一键运行:只跑勾选的步骤,线程用项目级计算资源
   const pipelineMutation = useMutation({
     mutationFn: () =>
       rnaseqApi.submitPipelineUpstream({
@@ -172,12 +222,12 @@ export function Upstream() {
           fasta: project!.reference_fasta || undefined,
           gtf: project!.reference_gtf || "",
           steps: [...selectedSteps],
+          // 总线程预算交给调度器,各步线程数由"预算 ÷ 并行度"自动算出,不再逐步指定
+          total_threads: project!.compute?.total_threads,
           star_align: {
-            threads: project!.compute?.threads ?? 8,
             ...(project!.upstream_params?.star_align || {}),
           },
           feature_counts: {
-            threads: project!.compute?.threads ?? 8,
             ...(project!.upstream_params?.feature_counts || {}),
           },
         },
@@ -185,7 +235,7 @@ export function Upstream() {
     onSuccess: (j: any) => {
       setPipeResult({
         ok: true,
-        message: `一键流程已提交 (id=${j.id})，按顺序跑你在圆环上勾选的步骤(共 ${selectedSteps.size} 步)。`,
+        message: `一键流程已提交 (id=${j.id}),按你勾选的步骤顺序执行(共 ${selectedSteps.size} 步)。`,
       });
       qc.invalidateQueries({ queryKey: ["jobs"] });
     },
@@ -251,28 +301,40 @@ export function Upstream() {
           .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
         const pipeRunning =
           !!pipeJob && (pipeJob.status === "running" || pipeJob.status === "pending");
-        const pipeCurStep = (() => {
+        // 节点 → 步骤键(默认同名;QC 原始/过滤后都归到 fastqc)
+        const stepKeyOf = (nodeId: string) => NODE_STEP_KEY[nodeId] || nodeId;
+        // 该节点是否在本次一键运行里(建索引随比对自动跑)
+        const nodeInRun = (nodeId: string): boolean => {
+          const ran: string[] = pipeJob?.params?.steps || [];
+          if (ran.includes(stepKeyOf(nodeId))) return true;
+          if (nodeId === "star_index") return ran.includes("star_align");
+          return false;
+        };
+        // 一键运行进行中,当前在跑哪个节点
+        const pipeCurNode = (() => {
           if (!pipeRunning) return null;
+          // 首选:编排器写进进度里的结构化节点 id(最可靠,不靠猜 stage 文字)
+          const declared = pipeJob.progress?.step;
+          if (declared && NODE_ORDER.includes(declared)) return declared;
           const stage = pipeJob.progress?.stage || "";
-          for (const [re, sid] of PIPE_STAGE_KEYWORDS) if (re.test(stage)) return sid;
-          // stage 文字没匹配上(下载/解压/过渡阶段没关键词)→ 用进度百分比兜底,
-          // 保证一键运行进行中始终有一个节点在转,不会出现"动画消失"
-          const ran = (pipeJob.params?.steps || [])
-            .filter((s: string) => STEP_ORDER.includes(s))
-            .sort((a: string, b: string) => STEP_ORDER.indexOf(a) - STEP_ORDER.indexOf(b));
-          if (!ran.length) return null;
+          for (const [re, nid] of PIPE_STAGE_KEYWORDS) if (re.test(stage)) return nid;
+          // step / 关键字都没命中(过渡阶段或旧数据)→ 按编排器真实进度区间精确定位。
           const pct = Math.max(0, Math.min(100, pipeJob.progress?.pct || 0));
+          for (const [lo, hi, nid] of PCT_NODE_BANDS) {
+            if (pct >= lo && pct < hi && nodeInRun(nid)) return nid;
+          }
+          // 再兜底:本次会跑的节点里按比例取一个,保证进行中始终有一个节点在转
+          const ran = NODE_ORDER.filter(nodeInRun);
+          if (!ran.length) return null;
           return ran[Math.min(ran.length - 1, Math.floor((pct / 100) * ran.length))];
         })();
-        // 一键运行对某一步的状态贡献(这步在本次勾选里才算)
-        const pipeStatusFor = (id: string): StepStatus | null => {
-          if (!pipeJob) return null;
-          const ran: string[] = pipeJob.params?.steps || [];
-          if (!ran.includes(id)) return null;
+        // 一键运行对某个节点的状态贡献
+        const pipeStatusFor = (nodeId: string): StepStatus | null => {
+          if (!pipeJob || !nodeInRun(nodeId)) return null;
           const s = pipeJob.status;
           if (s === "completed") return "done";
-          const ii = STEP_ORDER.indexOf(id);
-          const ci = pipeCurStep ? STEP_ORDER.indexOf(pipeCurStep) : -1;
+          const ii = NODE_ORDER.indexOf(nodeId);
+          const ci = pipeCurNode ? NODE_ORDER.indexOf(pipeCurNode) : -1;
           if (s === "running" || s === "pending") {
             if (ci >= 0 && ii < ci) return "done";
             if (ci >= 0 && ii === ci) return "running";
@@ -285,8 +347,10 @@ export function Upstream() {
           }
           return null;
         };
-        const statusOf = (id: string, ...cfgKeys: string[]): StepStatus => {
-          const indiv = latest[id];
+        // nodeId 唯一节点;statusKey 查单独任务/配置用的步骤键
+        const statusOf = (nodeId: string, statusKey: string, ...cfgKeys: string[]): StepStatus => {
+          const keys = cfgKeys.length ? cfgKeys : [statusKey];
+          const indiv = latest[statusKey];
           const indivNewer =
             indiv && pipeJob && new Date(indiv.created_at) > new Date(pipeJob.created_at);
           if (indiv && (indivNewer || !pipeJob)) {
@@ -295,7 +359,7 @@ export function Upstream() {
             if (s === "completed") return "done";
             if (s === "failed" || s === "cancelled" || s === "interrupted") return "failed";
           }
-          const ps = pipeStatusFor(id);
+          const ps = pipeStatusFor(nodeId);
           if (ps) return ps;
           if (indiv) {
             const s = indiv.status;
@@ -303,19 +367,21 @@ export function Upstream() {
             if (s === "completed") return "done";
             if (s === "failed" || s === "cancelled" || s === "interrupted") return "failed";
           }
-          return isCfg(...cfgKeys) ? "configured" : "pending";
+          return isCfg(...keys) ? "configured" : "pending";
         };
         const steps: FlowStep[] = [
-          { id: "sra", label: "SRA / fastq", icon: Download, status: statusOf("sra", "sra", "sra_download") },
-          { id: "fastqc", label: "质控", sublabel: "FastQC", icon: FileSearch, status: statusOf("fastqc", "fastqc") },
-          { id: "fastp", label: "过滤", sublabel: "fastp", icon: FilterIcon, status: statusOf("fastp", "fastp") },
-          { id: "star_align", label: "比对", sublabel: "STAR", icon: GitBranch, status: statusOf("star_align", "star_align", "star_index") },
-          { id: "feature_counts", label: "定量", sublabel: "featureCounts", icon: BarChart3, status: statusOf("feature_counts", "feature_counts") },
-          { id: "normalize", label: "标准化", icon: TrendingUp, status: statusOf("normalize", "normalize") },
-          { id: "library_qc", label: "文库质控", sublabel: "Qualimap", icon: FileSearch, status: statusOf("library_qc", "library_qc") },
-          { id: "new_transcripts", label: "新转录本", sublabel: "StringTie", icon: GitBranch, status: statusOf("new_transcripts", "new_transcripts") },
-          { id: "lncrna", label: "lncRNA", icon: DatabaseIcon, status: statusOf("lncrna", "lncrna") },
-          { id: "alt_splicing", label: "可变剪接", sublabel: "rMATS", icon: FilterIcon, status: statusOf("alt_splicing", "alt_splicing") },
+          { id: "sra", label: "数据准备", sublabel: "SRA · fastq", icon: Download, group: "core", status: statusOf("sra", "sra") },
+          { id: "fastqc_raw", label: "质控 · 原始", sublabel: "FastQC(过滤前)", icon: FileSearch, group: "core", selectKey: "fastqc_raw", status: statusOf("fastqc_raw", "fastqc_raw") },
+          { id: "fastp", label: "过滤", sublabel: "fastp", icon: FilterIcon, group: "core", subOptions: [{ id: "data_volume_stats", label: "数据量统计 (5.1.1)" }], status: statusOf("fastp", "fastp") },
+          { id: "fastqc_trimmed", label: "质控 · 过滤后", sublabel: "FastQC(过滤后)", icon: FileSearch, group: "core", selectKey: "fastqc_trimmed", status: statusOf("fastqc_trimmed", "fastqc_trimmed") },
+          { id: "star_index", label: "建索引", sublabel: "STAR index · 已存在则跳过", icon: DatabaseIcon, group: "core", selectable: false, status: statusOf("star_index", "star_index") },
+          { id: "star_align", label: "比对", sublabel: "STAR", icon: GitBranch, group: "core", subOptions: [{ id: "align_stats", label: "比对统计 (5.2.1)" }], status: statusOf("star_align", "star_align") },
+          { id: "feature_counts", label: "定量", sublabel: "featureCounts", icon: BarChart3, group: "core", status: statusOf("feature_counts", "feature_counts") },
+          { id: "normalize", label: "标准化", sublabel: "TPM · FPKM · CPM", icon: TrendingUp, group: "core", status: statusOf("normalize", "normalize") },
+          { id: "new_transcripts", label: "新转录本", sublabel: "StringTie", icon: GitBranch, group: "advanced", status: statusOf("new_transcripts", "new_transcripts") },
+          { id: "transdecoder", label: "编码区预测", sublabel: "TransDecoder", icon: GitBranch, group: "advanced", status: statusOf("transdecoder", "transdecoder") },
+          { id: "alt_splicing", label: "可变剪接", sublabel: "rMATS", icon: FilterIcon, group: "advanced", note: "需先分两组样本,建议单独运行", status: statusOf("alt_splicing", "alt_splicing") },
+          { id: "lncrna", label: "lncRNA", sublabel: "CPC2 · PLEK", icon: DatabaseIcon, group: "advanced", status: statusOf("lncrna", "lncrna") },
         ];
         return (
           <div className="mt-2">
@@ -324,16 +390,15 @@ export function Upstream() {
               activeId={drawerOpen ? tab : undefined}
               onSelectStep={(id) => openStep(id as TabId)}
               onRunAll={() => pipelineMutation.mutate()}
-              running={pipelineMutation.isPending}
+              running={pipelineMutation.isPending || pipeRunning}
               canRun={!!project.reference_gtf && selectedSteps.size > 0}
               selected={selectedSteps}
               onToggleSelect={toggleStep}
             />
-            <div className="mx-auto mt-1 max-w-[560px] text-center text-xs text-ink-faint">
-              每个步骤都能单独跑:点圆环上的步骤图标 → 配置后「保存参数」(不用等前面的文件生成)
-              或「运行这一步」。想连着跑多步,就勾上要跑的步骤(已选 {selectedSteps.size} 步),
-              点圆心「一键运行」按顺序执行 —— 6 个核心步骤不是必选的,勾几个跑几个。
-              高级分析默认不勾;可变剪接要先分两组样本,只能单独运行。
+            <div className="mx-auto mt-3 max-w-[680px] text-center text-xs leading-relaxed text-ink-faint">
+              点开任一步可单独「保存参数」(不必等前面文件生成)或「运行这一步」;勾选要跑的步骤
+              (已选 {selectedSteps.size} 步)后点「一键运行」按顺序执行。建索引随比对自动进行、
+              已存在则跳过;数据量统计与比对统计是对应步骤的勾选项;可变剪接需先分两组样本,建议单独运行。
             </div>
           </div>
         );
@@ -357,14 +422,18 @@ export function Upstream() {
         accent="rgb(var(--accent))"
       >
         {tab === "sra" && <SraForm project={project} />}
-        {tab === "fastqc" && <FastqcForm project={project} initialTarget="raw" />}
+        {(tab === "fastqc" || tab === "fastqc_raw") && <FastqcForm project={project} initialTarget="raw" />}
+        {tab === "fastqc_trimmed" && <FastqcForm project={project} initialTarget="trimmed" />}
         {tab === "fastp" && <FastpForm project={project} />}
+        {tab === "data_volume_stats" && <DataVolumeStatsForm project={project} />}
         {tab === "star_index" && <StarIndexForm project={project} />}
         {tab === "star_align" && <StarAlignForm project={project} />}
+        {tab === "align_stats" && <AlignStatsForm project={project} />}
         {tab === "feature_counts" && <FeatureCountsForm project={project} />}
         {tab === "normalize" && <NormalizeForm project={project} />}
         {tab === "library_qc" && <LibraryQcForm project={project} />}
         {tab === "new_transcripts" && <NewTranscriptsForm project={project} />}
+        {tab === "transdecoder" && <TransdecoderForm project={project} />}
         {tab === "alt_splicing" && <AltSplicingForm project={project} />}
         {tab === "lncrna" && <LncrnaForm project={project} />}
       </Drawer>
@@ -813,9 +882,6 @@ function SraForm({ project }: { project: any }) {
             </Banner>
           )}
 
-          <Field label="并发线程数" hint="fasterq-dump 解压用,默认 8">
-            <NumberInput value={threads} min={1} max={32} onChange={setThreads} />
-          </Field>
         </>
       }
     />
@@ -832,30 +898,31 @@ function Path1(p: string) {
 
 function FastqcForm({ project, initialTarget }: { project: any; initialTarget?: "raw" | "trimmed" }) {
   const qc = useQueryClient();
-  const prev = project.upstream_params?.fastqc || {};
-  const [target, setTarget] = useState<"raw" | "trimmed">(
-    initialTarget || (prev.target === "trimmed" ? "trimmed" : "raw")
-  );
+  // 过滤前 / 过滤后是两个独立步骤:target 由打开的节点决定,各自存参数、各自运行,互不影响。
+  const target: "raw" | "trimmed" = initialTarget === "trimmed" ? "trimmed" : "raw";
+  const fastqcKey = target === "trimmed" ? "fastqc_trimmed" : "fastqc_raw";
+  const prev = project.upstream_params?.[fastqcKey] || {};
   const [files, setFiles] = useState<string[]>(prev.fastq_files || []);
-  const [threads, setThreads] = useState<number>(prev.threads || 4);
 
-  // 用 scanSra 扫 raw 下的 fastq;trimmed 用 scanSamples 拿 r1/r2 平铺
+  // raw 用 scanSra 扫 raw 下 fastq;trimmed 用 scanSamples 拿 r1/r2 平铺
   const { data: rawScan } = useQuery({
     queryKey: ["scan-sra-fastqc", project.id],
     queryFn: () => coreApi.scanSra(project.id),
+    enabled: target === "raw",
   });
   const { data: trimmedScan } = useQuery({
     queryKey: ["scan-samples-fastqc-trimmed", project.id],
     queryFn: () => coreApi.scanSamples(project.id, "trimmed"),
+    enabled: target === "trimmed",
   });
 
-  // 当用户切换 target,自动重填文件列表(除非 prev 有保存且匹配)
+  // 文件列表为空时自动填入扫描结果(已选过就不覆盖)
   useEffect(() => {
+    if (files.length > 0) return;
     if (target === "raw") {
       const raw_files = rawScan?.fastq_files || [];
       if (raw_files.length > 0) setFiles(raw_files);
     } else {
-      // trimmed:拿 sample.r1/r2 拼成扁平列表
       const tfiles: string[] = [];
       for (const s of trimmedScan?.samples || []) {
         if (s.r1) tfiles.push(s.r1);
@@ -864,11 +931,11 @@ function FastqcForm({ project, initialTarget }: { project: any; initialTarget?: 
       if (tfiles.length > 0) setFiles(tfiles);
     }
     // eslint-disable-next-line
-  }, [target, rawScan?.fastq_files?.length, trimmedScan?.samples?.length]);
+  }, [rawScan?.fastq_files?.length, trimmedScan?.samples?.length]);
 
   // 输出目录:qc/raw/ 或 qc/trimmed/
   const outputPath = joinPath(project.workdir, "01_qc", target);
-  const summary_label = target;  // raw/trimmed
+  const summary_label = target; // raw/trimmed → 后端据此落到对应的独立 job kind
 
   const { mutation, result, setResult, saveOnly, saveMsg } = useStepSubmit(
     () =>
@@ -877,17 +944,12 @@ function FastqcForm({ project, initialTarget }: { project: any; initialTarget?: 
         output_path: outputPath,
         params: {
           fastq_files: files,
-          // 这个字段语义是"并行数"(同时跑几个 fastqc),不是单进程线程数。
-          // 以前同时塞了 threads 和 parallel 两个键,容易让人误解;现在只发 parallel。
-          parallel: threads,
           summary_label,
         } as any,
       }),
     () =>
-      coreApi.setUpstreamParams(project.id, "fastqc", {
-        target,
+      coreApi.setUpstreamParams(project.id, fastqcKey, {
         fastq_files: files,
-        threads,
       }),
     qc
   );
@@ -907,38 +969,10 @@ function FastqcForm({ project, initialTarget }: { project: any; initialTarget?: 
       }}
       formContent={
         <>
-          <Field label="目标阶段" hint="raw 看原始数据,trimmed 看 fastp 过滤后效果">
-            <div className="flex gap-2">
-              <button
-                onClick={() => setTarget("raw")}
-                className={`flex-1 px-3 py-2 text-xs rounded border ${
-                  target === "raw"
-                    ? "bg-accent/10 border-accent"
-                    : "border-bg-muted hover:border-ink-faint"
-                }`}
-              >
-                <div className="font-medium">raw/(过滤前)</div>
-                <div className="text-ink-faint mt-0.5">
-                  原始下载的 fastq
-                </div>
-              </button>
-              <button
-                onClick={() => setTarget("trimmed")}
-                className={`flex-1 px-3 py-2 text-xs rounded border ${
-                  target === "trimmed"
-                    ? "bg-accent/10 border-accent"
-                    : "border-bg-muted hover:border-ink-faint"
-                }`}
-              >
-                <div className="font-medium">trimmed/(过滤后)</div>
-                <div className="text-ink-faint mt-0.5">
-                  fastp 处理后的 fastq
-                </div>
-              </button>
-            </div>
-          </Field>
           <Banner variant="info">
             <div className="text-xs">
+              {target === "raw" ? "过滤前质控(raw/)" : "过滤后质控(trimmed/)"},与另一阶段相互独立。
+              <br />
               输出位置:<code>{outputPath}/</code>
               <br />
               汇总文件: <code>fastqc_{summary_label}_summary.tsv</code>
@@ -956,11 +990,8 @@ function FastqcForm({ project, initialTarget }: { project: any; initialTarget?: 
                 extensions: ["fq", "fq.gz", "fastq", "fastq.gz"],
               },
             ]}
-            hint={`默认从 ${project.workdir}/${target}/ 自动填入`}
+            hint="默认自动填入对应目录下的 fastq"
           />
-          <Field label="并行数(同时跑几个 FastQC)">
-            <NumberInput value={threads} min={1} max={16} onChange={setThreads} />
-          </Field>
         </>
       }
     />
@@ -1144,9 +1175,6 @@ function FastpForm({ project }: { project: any }) {
                 <Input value={adapter2} onChange={(e) => setAdapter2(e.target.value)} />
               </Field>
             </div>
-            <Field label="线程数">
-              <NumberInput value={threads} min={1} onChange={setThreads} />
-            </Field>
           </div>
         </>
       }
@@ -1356,9 +1384,6 @@ function StarIndexForm({ project }: { project: any }) {
             </Field>
           )}
 
-          <Field label="线程数">
-            <NumberInput value={threads} min={1} onChange={setThreads} />
-          </Field>
 
           {willBuildOverhangs.length > 1 && (
             <Banner variant="warning">
@@ -1530,9 +1555,6 @@ function StarAlignForm({ project }: { project: any }) {
               rows={6}
               className="font-mono text-xs"
             />
-          </Field>
-          <Field label="线程数">
-            <NumberInput value={threads} min={1} onChange={setThreads} />
           </Field>
         </>
       }
@@ -1711,9 +1733,6 @@ function FeatureCountsForm({ project }: { project: any }) {
                 <option value="2">2 (reversely stranded)</option>
               </Select>
             </Field>
-            <Field label="线程数" hint="featureCounts 上限 64,超过自动 cap">
-              <NumberInput value={threads} min={1} max={64} onChange={setThreads} />
-            </Field>
           </div>
           <div className="text-xs text-ink-faint">
             ℹ️ 单/双端 自动从 BAM 检测,不需要手动选
@@ -1725,6 +1744,96 @@ function FeatureCountsForm({ project }: { project: any }) {
 }
 
 // ─── Normalize ───
+
+function DataVolumeStatsForm({ project }: { project: any }) {
+  const qc = useQueryClient();
+  const trimmedDir = joinPath(project.workdir, "02_trimmed");
+  const { mutation, result, setResult } = useStepSubmit(
+    () =>
+      rnaseqApi.submitDataVolumeStats({
+        project_id: project.id,
+        output_path: trimmedDir,
+        params: { trimmed_dir: trimmedDir } as any,
+      }),
+    () => {},
+    qc
+  );
+  return (
+    <SubmitForm pending={mutation.isPending} result={result}
+      onSubmit={() => { setResult(null); mutation.mutate(); }}
+      formContent={
+        <div className="text-xs text-ink-muted leading-relaxed">
+          解析 fastp 过滤产出的每样本 JSON 报告,汇总成测序数据量统计表(stat.all.txt),
+          列与商业报告表 3 一致:Raw / Clean 的 reads 与 bases、Q20 / Q30、GC 含量。
+          需先跑过「过滤(fastp)」。无需额外参数,直接运行即可。
+          <div className="mt-2 text-ink-faint">
+            输出:<code className="font-mono">{trimmedDir}/stat.all.txt</code>
+          </div>
+        </div>
+      } />
+  );
+}
+
+function AlignStatsForm({ project }: { project: any }) {
+  const qc = useQueryClient();
+  const alignedDir = joinPath(project.workdir, "04_aligned");
+  const { mutation, result, setResult } = useStepSubmit(
+    () =>
+      rnaseqApi.submitAlignStats({
+        project_id: project.id,
+        output_path: alignedDir,
+        params: { aligned_dir: alignedDir } as any,
+      }),
+    () => {},
+    qc
+  );
+  return (
+    <SubmitForm pending={mutation.isPending} result={result}
+      onSubmit={() => { setResult(null); mutation.mutate(); }}
+      formContent={
+        <div className="text-xs text-ink-muted leading-relaxed">
+          解析 STAR 比对产出的每样本 Log.final.out,汇总成比对率统计表(align_stat.txt),
+          列与商业报告表 4 一致:Total reads、Mapped(数与占比)、唯一比对(数与占比)。
+          需先跑过「比对(STAR)」。无需额外参数,直接运行即可。
+          <div className="mt-2 text-ink-faint">
+            输出:<code className="font-mono">{alignedDir}/align_stat.txt</code>
+          </div>
+        </div>
+      } />
+  );
+}
+
+function TransdecoderForm({ project }: { project: any }) {
+  const qc = useQueryClient();
+  const fasta = project.reference_fasta;
+  const merged = joinPath(project.workdir, "08_new_transcripts", "merged.gtf");
+  const outDir = joinPath(project.workdir, "08_new_transcripts", "transdecoder");
+  const { mutation, result, setResult } = useStepSubmit(
+    () =>
+      rnaseqApi.submitTransdecoder({
+        project_id: project.id,
+        output_path: outDir,
+        params: { candidate_gtf: merged, genome_fasta: fasta } as any,
+      }),
+    () => {},
+    qc
+  );
+  if (!fasta) return <MissingReferenceWarning field="fasta" projectId={project.id} />;
+  return (
+    <SubmitForm pending={mutation.isPending} result={result}
+      onSubmit={() => { setResult(null); mutation.mutate(); }}
+      formContent={
+        <div className="text-xs text-ink-muted leading-relaxed">
+          对「新转录本」步骤产出的 merged.gtf 抽出转录本序列(gffread),再用 TransDecoder
+          预测编码区(LongOrfs → Predict),产出蛋白 / CDS 序列与 ORF 位置。需先跑过「新转录本」。
+          <div className="mt-2 text-ink-faint">
+            候选转录本:<code className="font-mono">{merged}</code>
+            <br />输出目录:<code className="font-mono">{outDir}</code>
+          </div>
+        </div>
+      } />
+  );
+}
 
 function NewTranscriptsForm({ project }: { project: any }) {
   const qc = useQueryClient();
@@ -1854,15 +1963,14 @@ function AltSplicingForm({ project }: { project: any }) {
 function LncrnaForm({ project }: { project: any }) {
   const qc = useQueryClient();
   const prev = project.upstream_params?.lncrna || {};
-  const defaultCand = joinPath(project.workdir, "new_transcripts/merged.gtf");
+  const defaultCand = joinPath(project.workdir, "08_new_transcripts/merged.gtf");
   const [candGtf, setCandGtf] = useState<string>(prev.candidate_gtf || defaultCand);
-  const gtf = project.reference_gtf;
   const fasta = project.reference_fasta;
   const { mutation, result, setResult, saveOnly, saveMsg } = useStepSubmit(
     () => rnaseqApi.submitLncrna({
       project_id: project.id,
       output_path: joinPath(project.workdir, "10_lncrna"),
-      params: { candidate_gtf: candGtf, gtf, genome_fasta: fasta } as any,
+      params: { candidate_gtf: candGtf, genome_fasta: fasta } as any,
     }),
     () => coreApi.setUpstreamParams(project.id, "lncrna", { candidate_gtf: candGtf }),
     qc
@@ -1872,7 +1980,6 @@ function LncrnaForm({ project }: { project: any }) {
     if (typeof f === "string") setCandGtf(f);
   }
   if (!fasta) return <MissingReferenceWarning field="fasta" projectId={project.id} />;
-  if (!gtf) return <MissingReferenceWarning field="gtf" projectId={project.id} />;
   return (
     <SubmitForm onSaveParams={saveOnly} saveMsg={saveMsg} pending={mutation.isPending} result={result}
       prevParams={Object.keys(prev).length > 0 ? prev : undefined}
@@ -1880,7 +1987,7 @@ function LncrnaForm({ project }: { project: any }) {
       formContent={
         <>
           <div className="text-xs text-ink-muted">
-            用 FEELnc 从候选转录本里过滤 + 判定 lncRNA(编码潜能)并分类。候选 GTF 用"新转录本"步骤产出的 merged.gtf。
+            用 CPC2 与 PLEK 两种编码潜能工具各判一次,取两者都判为非编码的转录本作为 lncRNA。候选 GTF 用"新转录本"步骤产出的 merged.gtf。
           </div>
           <Card>
             <label className="mb-1 block text-xs text-ink-muted">候选转录本 GTF</label>
@@ -1888,7 +1995,7 @@ function LncrnaForm({ project }: { project: any }) {
               <input value={candGtf} onChange={(e) => setCandGtf(e.target.value)} className="w-full rounded border border-border bg-bg-surface px-2 py-1 text-xs" />
               <Button variant="secondary" size="sm" onClick={pickGtf}>选择</Button>
             </div>
-            <div className="mt-1 text-[11px] text-ink-faint">默认指向 new_transcripts/merged.gtf,需先跑完"新转录本"步骤。</div>
+            <div className="mt-1 text-[11px] text-ink-faint">默认指向 08_new_transcripts/merged.gtf,需先跑完"新转录本"步骤。</div>
           </Card>
         </>
       } />

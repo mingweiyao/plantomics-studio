@@ -8,7 +8,7 @@
  *   - "新增分析"向导:引导用户填元数据 + 贴 R 代码 + 传示例文件/预览图,写进扫描目录;
  *   - 丢进目录的分析重启后仍在(持久)。
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -67,6 +67,32 @@ export function AnalysisHome() {
   const [runFor, setRunFor] = useState<AnalysisManifest | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [notice, setNotice] = useState<{ ok: boolean; msg: string } | null>(null);
+  // 正在盯着完成情况的任务(提交后轮询,跑完弹提示)
+  const [watch, setWatch] = useState<{ id: string; label: string } | null>(null);
+
+  const TERMINAL = ["completed", "failed", "cancelled", "interrupted"];
+  const watchQ = useQuery({
+    queryKey: ["analysis-job-watch", watch?.id],
+    queryFn: () => analysisApi.job(watch!.id),
+    enabled: !!watch,
+    refetchInterval: (q) => {
+      const st = (q.state.data as any)?.status;
+      return st && TERMINAL.includes(st) ? false : 2000;
+    },
+  });
+  useEffect(() => {
+    const job: any = watchQ.data;
+    if (!watch || !job || !TERMINAL.includes(job.status)) return;
+    const ok = job.status === "completed";
+    setNotice({
+      ok,
+      msg: ok
+        ? `已完成:${watch.label}。输出已写入指定目录,详见任务面板。`
+        : `${watch.label} ${job.status === "failed" ? "运行失败" : "已结束"}${job.error ? ":" + job.error : ""}`,
+    });
+    setWatch(null);
+    qc.invalidateQueries({ queryKey: ["jobs"] });
+  }, [watchQ.data, watch, qc]);
 
   const rescanMut = useMutation({
     mutationFn: analysisApi.rescan,
@@ -185,7 +211,8 @@ export function AnalysisHome() {
             datasetTypes={datasetTypes}
             onSubmitted={(jobId) => {
               setRunFor(null);
-              setNotice({ ok: true, msg: `已提交:${runFor.label}(任务 ${jobId})。进度见任务面板。` });
+              setWatch({ id: jobId, label: runFor.label });
+              setNotice({ ok: true, msg: `提交成功:${runFor.label}。运行中,完成后会在这里提示(也可在任务面板查看)。` });
               qc.invalidateQueries({ queryKey: ["jobs"] });
             }}
             onError={(msg) => setNotice({ ok: false, msg })}
@@ -289,13 +316,16 @@ function RunPanel({
     for (const pr of analysis.params) p[pr.key] = pr.default;
     return p;
   });
+  const [outputPath, setOutputPath] = useState(
+    () => `${String(project.workdir).replace(/\/+$/, "")}/analysis/${analysis.id}`
+  );
 
   const runMut = useMutation({
     mutationFn: () =>
       analysisApi.run({
         analysis_id: analysis.id,
         project_id: project.id,
-        output_path: project.workdir,
+        output_path: outputPath.trim() || project.workdir,
         inputs,
         params,
       }),
@@ -306,6 +336,10 @@ function RunPanel({
   async function pickFile(type: string) {
     const f = await openDialog({ multiple: false, title: `选择 ${type} 文件` });
     if (typeof f === "string") setInputs((s) => ({ ...s, [type]: f }));
+  }
+  async function pickDir() {
+    const d = await openDialog({ directory: true, title: "选择输出目录" });
+    if (typeof d === "string") setOutputPath(d);
   }
 
   const inputCls =
@@ -356,6 +390,25 @@ function RunPanel({
           </div>
         </div>
       )}
+
+      {/* 输出目录 */}
+      <div>
+        <div className="mb-2 text-xs font-medium text-ink-faint">输出目录</div>
+        <div className="flex gap-2">
+          <input
+            value={outputPath}
+            onChange={(e) => setOutputPath(e.target.value)}
+            className={inputCls}
+            placeholder="结果写入的目录"
+          />
+          <Button variant="secondary" size="sm" onClick={pickDir}>
+            <FolderOpen size={13} />
+          </Button>
+        </div>
+        <div className="mt-1 text-[11px] text-ink-faint">
+          结果文件(图 / 表)写入这里,目录不存在会自动创建。
+        </div>
+      </div>
 
       <Button
         className="w-full"

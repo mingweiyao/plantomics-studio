@@ -74,15 +74,14 @@ class FeatureCountsRunner(BaseRunner):
         feature_type = params.get("feature_type", "exon")
         attribute = params.get("attribute", "gene_id")
         
-        # featureCounts -T 上限 64
+        # 先取本任务的全局 CPU 配额(总预算 ÷ 并行度);再 cap 到 featureCounts -T 上限 64
+        threads = self.effective_threads(threads)
         if threads > FC_THREADS_MAX:
             self.log(
                 f"⚠️ featureCounts 的 -T 上限是 {FC_THREADS_MAX},"
-                f"用户给的 {threads} 自动 cap 到 {FC_THREADS_MAX}"
+                f"配额 {threads} 自动 cap 到 {FC_THREADS_MAX}"
             )
             threads = FC_THREADS_MAX
-        # 再 clamp 到本任务的全局 CPU 配额(并发任务不超额订阅)
-        threads = self.effective_threads(threads)
         
         if not bams:
             raise ValueError("未提供 BAM 列表")

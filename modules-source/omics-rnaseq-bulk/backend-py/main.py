@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
     data_dir = Path(os.environ.get("MODULE_DATA_DIR", "."))
     data_dir.mkdir(parents=True, exist_ok=True)
     
-    max_concurrent = int(os.environ.get("MAX_CONCURRENT_JOBS", "2"))
+    max_concurrent = int(os.environ.get("MAX_CONCURRENT_JOBS", "1"))
     # 总线程预算:默认探测本机逻辑核心数;可用 PLANTOMICS_CPU_BUDGET 覆盖。
     budget_env = os.environ.get("PLANTOMICS_CPU_BUDGET")
     total_threads = int(budget_env) if budget_env and budget_env.isdigit() else None
@@ -229,10 +229,16 @@ def create_app() -> FastAPI:
 
     @app.post("/submit/fastqc")
     async def submit_fastqc(req: SubmitJobBaseRequest):
-        """params: {fastq_files: [str], threads: int (默认 4)}"""
+        """params: {fastq_files: [str], summary_label: 'raw'|'trimmed'}
+
+        按 summary_label 区分过滤前/后质控,落到独立的 job kind,
+        让两步在前端各自独立(状态、勾选、参数互不影响)。
+        """
         if not req.params.get("fastq_files"):
             raise HTTPException(400, "params.fastq_files 必填")
-        return _submit(JobKind.FASTQC.value, req)
+        label = (req.params.get("summary_label") or "raw").lower()
+        kind = JobKind.FASTQC_TRIMMED.value if label == "trimmed" else JobKind.FASTQC_RAW.value
+        return _submit(kind, req)
 
     @app.post("/submit/fastp")
     async def submit_fastp(req: SubmitJobBaseRequest):
@@ -302,11 +308,12 @@ def create_app() -> FastAPI:
 
     @app.post("/submit/lncrna")
     async def submit_lncrna(req: SubmitJobBaseRequest):
-        """lncRNA 预测(gffcompare 分类 + gffread + ORF 编码潜能)。params: {candidate_gtf, gtf, genome_fasta, threads, min_length, max_orf_aa}"""
+        """lncRNA 预测(CPC2 + PLEK 取非编码交集)。
+        params: {candidate_gtf, genome_fasta, min_length?, threads?}"""
         if not req.params.get("candidate_gtf"):
             raise HTTPException(400, "params.candidate_gtf 必填(用新转录本步骤的 merged.gtf)")
-        if not req.params.get("gtf") or not req.params.get("genome_fasta"):
-            raise HTTPException(400, "params.gtf / genome_fasta 必填")
+        if not req.params.get("genome_fasta"):
+            raise HTTPException(400, "params.genome_fasta 必填")
         return _submit(JobKind.LNCRNA.value, req)
 
     @app.post("/submit/merge-counts")
@@ -336,6 +343,26 @@ def create_app() -> FastAPI:
         if not (p.get("counts_file") or p.get("counts_files")):
             raise HTTPException(400, "需要 counts_file 或 counts_files")
         return _submit(JobKind.NORMALIZE.value, req)
+
+    @app.post("/submit/data-volume-stats")
+    async def submit_data_volume_stats(req: SubmitJobBaseRequest):
+        """测序数据量统计(解析 fastp JSON,报告 5.1.1)。params: {trimmed_dir?}"""
+        return _submit(JobKind.DATA_VOLUME_STATS.value, req)
+
+    @app.post("/submit/align-stats")
+    async def submit_align_stats(req: SubmitJobBaseRequest):
+        """比对率统计(解析 STAR Log.final.out,报告 5.2.1)。params: {aligned_dir?}"""
+        return _submit(JobKind.ALIGN_STATS.value, req)
+
+    @app.post("/submit/transdecoder")
+    async def submit_transdecoder(req: SubmitJobBaseRequest):
+        """新转录本编码区预测(TransDecoder)。
+        params: {candidate_gtf, genome_fasta, min_orf_aa?, single_best?}"""
+        if not req.params.get("candidate_gtf"):
+            raise HTTPException(400, "params.candidate_gtf 必填(用新转录本步骤的 merged.gtf)")
+        if not req.params.get("genome_fasta"):
+            raise HTTPException(400, "params.genome_fasta 必填")
+        return _submit(JobKind.TRANSDECODER.value, req)
 
     # ─── 一键运行(上游)────────────────────────
     @app.post("/submit/pipeline-upstream")

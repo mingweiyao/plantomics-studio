@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 class JobManager:
     """单例,在模块 main.py 里通过 get() 取。"""
     
-    def __init__(self, module_data_dir: Path, max_concurrent: int = 2,
+    def __init__(self, module_data_dir: Path, max_concurrent: int = 1,
                  total_threads: int | None = None):
         self.data_dir = module_data_dir
         self.max_concurrent = max_concurrent
@@ -223,8 +223,14 @@ class JobManager:
                    f"启动 runner,输出目录 {out_dir}")
         
         # 让 runners.dispatcher 决定怎么启动这种 kind 的任务
-        # 注入本任务的线程配额(全局预算 // 并发数),runner 据此 clamp 线程数
-        thread_quota = self.cpu_budget.quota_for(running_now=len(self._processes))
+        # 本任务线程配额 = 总线程预算 ÷ 并行度,均分给同时在跑的任务。
+        # 总预算优先用项目设置(随提交传入的 params.total_threads),否则用模块全局
+        # 预算(前端在打开项目时通过 PUT /concurrency 同步成该项目的 total_threads)。
+        proj_total = job.params.get("total_threads")
+        if isinstance(proj_total, int) and proj_total > 0:
+            thread_quota = max(1, proj_total // max(1, self.max_concurrent))
+        else:
+            thread_quota = self.cpu_budget.quota_for(running_now=len(self._processes))
         proc = await dispatch_runner(job, self.data_dir,
                                      thread_quota=thread_quota)
         job.pid = proc.pid
@@ -314,7 +320,7 @@ def _now() -> str:
 _manager: Optional[JobManager] = None
 
 
-def init(module_data_dir: Path, max_concurrent: int = 2,
+def init(module_data_dir: Path, max_concurrent: int = 1,
          total_threads: int | None = None) -> JobManager:
     global _manager
     _manager = JobManager(module_data_dir, max_concurrent,
