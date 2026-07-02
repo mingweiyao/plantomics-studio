@@ -1,0 +1,50 @@
+id: omics-ont-transcriptome
+name: ONT 全长转录组分析
+version: 1.0.0
+description: |
+  基于 Oxford Nanopore 三代测序的全长转录组分析流程:
+  从 ONT raw data 到全长序列鉴定、转录本组装、新转录本发现、
+  表达定量、可变剪接分析、融合基因、SSR 及转录因子分析。
+author: PlantOmics Team
+license: GPL-3.0
+icon: layers
+
+core_required: ">=1.0.0,<2.0.0"
+
+extends:
+  project_types:
+    - id: ont_transcriptome
+      name: ONT 全长转录组
+      description: 从 ONT raw data 到全长转录本组装、定量、结构分析
+  reference_types:
+    - id: ont_transcriptome_reference
+      name: 转录组参考(基因组+注释)
+      description: minimap2 比对用基因组 FASTA + GTF 注释
+      required_files:
+        - id: fasta
+          label: 基因组 FASTA
+          extensions: [fa, fasta, fna, fa.gz]
+          required: true
+        - id: gtf
+          label: 基因结构注释 GTF
+          extensions: [gtf, gff, gff3, gtf.gz]
+          required: true
+  menu_items:
+    - id: ont_transcriptome_processing
+      label: 数据处理
+      icon: cog
+      route: /ont-transcriptome
+      description: 全长鉴定 / 比对 / 组装 / 新转录本 / 注释
+    - id: ont_transcriptome_analysis
+      label: 定量与结构
+      icon: bar-chart
+      route: /ont-transcriptome-analysis
+      description: 表达定量 / AS / 融合 / SSR / TF
+
+runtime:
+  python:
+    entry: backend-py/main.py
+    health_path: /health
+  r:
+    entry: backend-r/plumber.R
+    health_path: /health

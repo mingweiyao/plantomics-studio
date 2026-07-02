@@ -29,6 +29,7 @@
   feature_counts: {paired, strand}(可选)
 """
 import re
+import shutil
 from pathlib import Path
 
 from runners.base import BaseRunner
@@ -223,16 +224,30 @@ class PipelineUpstreamRunner(BaseRunner):
             needed_overhangs = [100]
             self.log("没扫到读长信息,用默认 overhang=100")
 
-        # 检查每个需要的 overhang 索引是否已存在;已存在则不重建
+        # STAN Index 缓存:基于参考基因组的 hash 持久化,避免每次 pipeline 重建
+        # 缓存目录: ~/.plantomics/modules/omics-rnaseq-bulk/star_index/<hash>/
+        import hashlib
+        cache_key = hashlib.md5(
+            (str(fasta) + str(gtf)).encode()
+        ).hexdigest()[:12] if fasta and gtf else None
+        star_cache_dir = Path.home() / ".plantomics" / "modules" / "omics-rnaseq-bulk" / "star_index" / cache_key if cache_key else None
+
+        # 检查 index_dir 或缓存里是否已存在
         missing = []
         if (index_dir / "genomeParameters.txt").exists():
             self.log("检测到老版本单索引(根目录),跳过新建")
         else:
+            # 先看 index_dir 里有没有
             for oh in needed_overhangs:
                 if not (index_dir / str(oh) / "genomeParameters.txt").exists():
-                    missing.append(oh)
+                    # 再看缓存里有没有
+                    if star_cache_dir and (star_cache_dir / str(oh) / "genomeParameters.txt").exists():
+                        self.log(f"缓存命中: overhang={oh}, 从缓存链接到工作目录")
+                        (index_dir / str(oh)).symlink_to(star_cache_dir / str(oh))
+                    else:
+                        missing.append(oh)
 
-        if "star_align" in steps and not (index_dir / "genomeParameters.txt").exists() and missing:
+        if "star_align" in steps and missing:
             self._pipeline_step = "star_index"
             self.update(pct=31, stage=f"STAR Index(建 {len(missing)} 个 overhang)")
             if not fasta or not Path(fasta).is_file():
@@ -244,6 +259,16 @@ class PipelineUpstreamRunner(BaseRunner):
                 output_subdir=str(index_dir),
                 pct_start=31, pct_end=44,
             )
+            # 构建完成后,缓存到持久目录
+            if star_cache_dir:
+                star_cache_dir.mkdir(parents=True, exist_ok=True)
+                for oh in missing:
+                    src = index_dir / str(oh)
+                    if src.exists():
+                        dst = star_cache_dir / str(oh)
+                        if not dst.exists():
+                            shutil.copytree(src, dst, symlinks=True)
+                            self.log(f"STAR 索引已缓存: overhang={oh}")
         else:
             self.log("STAR Index 都已存在或本次不比对,跳过建索引")
 
@@ -261,7 +286,7 @@ class PipelineUpstreamRunner(BaseRunner):
             self._run_subrunner(
                 StarAlignRunner,
                 params={"index_root": str(index_dir), "samples": align_samples,
-                        "quant_mode": "GeneCounts"},
+                        "quant_mode": "GeneCounts", "parallel": 2},
                 output_subdir=str(aligned_dir),
                 pct_start=44, pct_end=68,
             )

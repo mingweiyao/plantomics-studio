@@ -1,0 +1,46 @@
+id: omics-drs
+name: Direct RNA Sequencing 分析
+version: 1.0.0
+description: |
+  基于 ONT Direct RNA Sequencing 的直接 RNA 测序分析流程:
+  不经反转录和 PCR 扩增。覆盖全长转录本鉴定(Flair)、
+  表达定量、可变剪接、poly(A)尾长分析、lncRNA 预测
+  及 RNA 修饰(m6A/m5C)检测。
+author: PlantOmics Team
+license: GPL-3.0
+icon: rna
+
+core_required: ">=1.0.0,<2.0.0"
+
+extends:
+  project_types:
+    - id: drs
+      name: Direct RNA Sequencing
+      description: ONT 直接 RNA 测序(无PCR偏好)
+  reference_types:
+    - id: drs_reference
+      name: DRS 参考(基因组+注释)
+      description: minimap2 比对用基因组 FASTA + GTF 注释
+      required_files:
+        - id: fasta
+          label: 基因组 FASTA
+          extensions: [fa, fasta, fna, fa.gz]
+          required: true
+        - id: gtf
+          label: 基因结构注释 GTF
+          extensions: [gtf, gff, gff3, gtf.gz]
+          required: true
+  menu_items:
+    - id: drs
+      label: DRS 分析
+      icon: rna
+      route: /drs
+      description: 转录本 / polyA / RNA修饰
+
+runtime:
+  python:
+    entry: backend-py/main.py
+    health_path: /health
+  r:
+    entry: backend-r/plumber.R
+    health_path: /health

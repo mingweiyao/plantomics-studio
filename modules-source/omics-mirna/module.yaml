@@ -1,0 +1,48 @@
+id: omics-mirna
+name: miRNA 测序分析
+version: 1.0.0
+description: |
+  基于 miRDeep2 的标准 miRNA 分析流程:
+  从 SRA/fastq 到 miRNA 鉴定、定量、差异表达、靶基因预测及共表达网络。
+author: PlantOmics Team
+license: GPL-3.0
+icon: rna
+
+core_required: ">=1.0.0,<2.0.0"
+
+extends:
+  project_types:
+    - id: mirna_seq
+      name: miRNA 测序
+      description: 从 SRA/fastq 到 miRNA 鉴定、靶基因预测及共表达网络
+  reference_types:
+    - id: mirna_reference
+      name: miRNA 参考(基因组+3'UTR)
+      description: bowtie 比对用基因组 + 3'UTR 序列(靶基因预测)
+      required_files:
+        - id: fasta
+          label: 基因组 FASTA
+          extensions: [fa, fasta, fna, fa.gz]
+          required: true
+        - id: gff
+          label: 基因结构注释 GFF/GTF
+          extensions: [gtf, gff, gff3]
+          required: true
+        - id: utr_fasta
+          label: mRNA 3'UTR FASTA (靶基因预测)
+          extensions: [fa, fasta]
+          required: false
+  menu_items:
+    - id: mirna
+      label: miRNA 分析
+      icon: rna
+      route: /mirna
+      description: 鉴定 / 定量 / 靶基因 / 共表达
+
+runtime:
+  python:
+    entry: backend-py/main.py
+    health_path: /health
+  r:
+    entry: backend-r/plumber.R
+    health_path: /health

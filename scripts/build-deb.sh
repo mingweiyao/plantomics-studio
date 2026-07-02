@@ -261,6 +261,8 @@ rm -rf "$WORK_DIR"
 mkdir -p "$WORK_DIR"
 
 dpkg-deb -R "$ORIGINAL_DEB" "$WORK_DIR"
+# 修復 DEBIAN 目录权限（Tauri 打包有时会用 2755）
+chmod 755 "$WORK_DIR/DEBIAN" 2>/dev/null || true
 
 INSTALL_ROOT="$WORK_DIR/opt/plantomics-studio"
 mkdir -p "$INSTALL_ROOT"
@@ -329,6 +331,10 @@ esac
 exit 0
 POSTRM
 chmod 755 "$WORK_DIR/DEBIAN/postrm"
+
+# 再次确保 DEBIAN 目录权限正确（Tauri 生成的 deb 有时带 setgid）
+chmod g-s "$WORK_DIR/DEBIAN" 2>/dev/null || true
+chmod 755 "$WORK_DIR/DEBIAN" 2>/dev/null || true
 
 cd "$ROOT"
 dpkg-deb --build --root-owner-group -Zxz "$WORK_DIR" "dist/${DEB_NAME}"

@@ -36,23 +36,24 @@ FC_THREADS_MAX = 64
 
 def detect_bam_paired(bam_path: Path) -> bool | None:
     """读 BAM 第一条 alignment 的 flag,看 0x1 (paired) 位。
-    
-    用 samtools view 拿第一行(BAM 是二进制 + bgzip,不能直接读)。
+
+    samtools view 不加限制输出整个 BAM → capture_output 吃几 GB 内存。
+    用 Popen + readline 只读第一行。
     返回 True/False/None(None = 检测失败,默认当 paired)。
     """
     try:
-        # samtools view 拿首条 alignment(不要头)
-        result = subprocess.run(
+        proc = subprocess.Popen(
             ["samtools", "view", str(bam_path)],
-            capture_output=True, text=True, timeout=30,
-            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True,
         )
-        if result.returncode != 0:
-            return None
-        first_line = result.stdout.split("\n", 1)[0]
+        try:
+            first_line = proc.stdout.readline() if proc.stdout else ""
+            proc.kill()
+        finally:
+            proc.wait(timeout=10)
         if not first_line:
             return None
-        # SAM 格式:QNAME FLAG RNAME ...
         fields = first_line.split("\t")
         if len(fields) < 2:
             return None

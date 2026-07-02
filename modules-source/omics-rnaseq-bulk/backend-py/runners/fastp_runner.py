@@ -33,11 +33,13 @@ class FastpRunner(BaseRunner):
         adapter_r2 = params.get("adapter_sequence_r2", "")
         threads_per = int(params.get(
             "threads_per_sample",
-            params.get("threads", 4)  # 兼容老参数
+            4  # fastp 是 I/O 密集型,多线程收益有限;默认 4 足够
         ))
         parallel = int(params.get("parallel", 2))
         # 把 并行数 × 单样本线程数 clamp 到全局 CPU 配额内,保证不超额订阅
         parallel, threads_per = self.effective_parallel_alloc(parallel, threads_per)
+        # fastp 是 I/O 密集型,多线程主要是 gzip 压缩,超过 8 线程收益递减
+        threads_per = min(threads_per, 8)
         
         out_dir = self.output_dir()
         
@@ -61,6 +63,7 @@ class FastpRunner(BaseRunner):
                 "-u", str(u),
                 "-l", str(L),
                 "-w", str(threads_per),
+                "-z", "6",              # gzip 压缩,减少 I/O 量(无此参数写无压缩文本,慢 3-4 倍)
                 "--html", str(sample_dir / f"{name}.fastp.html"),
                 "--json", str(sample_dir / f"{name}.fastp.json"),
             ]

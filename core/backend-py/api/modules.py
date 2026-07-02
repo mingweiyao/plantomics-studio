@@ -13,7 +13,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel
 
-from installer import catalog, downloader, apt_runner
+from installer import catalog, apt_runner
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

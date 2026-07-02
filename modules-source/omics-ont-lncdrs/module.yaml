@@ -1,0 +1,49 @@
+id: omics-ont-lncdrs
+name: ONT LncRNA Direct RNA Sequencing 分析
+version: 1.0.0
+description: |
+  基于 ONT 直接 RNA 测序的 lncRNA 分析流程:
+  不经反转录，直接对 lncRNA 测序。覆盖 lncRNA 鉴定(CPC2/PLEK)、
+  poly(A)长度分析、可变剪接、融合基因及 RNA 修饰检测。
+author: PlantOmics Team
+license: GPL-3.0
+icon: rna
+
+core_required: ">=1.0.0,<2.0.0"
+
+extends:
+  project_types:
+    - id: ont_lncdrs
+      name: ONT LncDRS
+      description: lncRNA 直接 RNA 测序(含 polyA + RNA 修饰)
+  reference_types:
+    - id: ont_lncdrs_reference
+      name: LncDRS 参考(基因组+rRNA数据库+注释)
+      description: 比对用基因组 + rRNA DB + GTF
+      required_files:
+        - id: fasta
+          label: 基因组 FASTA
+          extensions: [fa, fasta, fna, fa.gz]
+          required: true
+        - id: gtf
+          label: 基因结构注释 GTF
+          extensions: [gtf, gff, gff3, gtf.gz]
+          required: true
+        - id: rrna_db
+          label: 核糖体 RNA 数据库 FASTA
+          extensions: [fa, fasta, fa.gz]
+          required: true
+  menu_items:
+    - id: lncdrs
+      label: LncDRS 分析
+      icon: rna
+      route: /lncdrs
+      description: polyA / lncRNA鉴定 / AS / 修饰
+
+runtime:
+  python:
+    entry: backend-py/main.py
+    health_path: /health
+  r:
+    entry: backend-r/plumber.R
+    health_path: /health

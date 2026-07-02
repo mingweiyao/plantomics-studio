@@ -174,12 +174,35 @@ def log_file(module_data_dir: Path, job_id: str) -> Path:
 
 
 def save_job(module_data_dir: Path, job: Job) -> None:
-    """原子写。先写 .tmp 再 rename,避免读到半截文件。"""
+    """原子写。先写 .tmp 再 rename,避免读到半截文件。
+
+    多线程并行时(如 run_in_parallel)多个线程同时调此函数,
+    tmp.replace(f) 会因另一个线程抢先 rename 而 FileNotFoundError。
+    加指数退避重试解决。
+    """
+    import time
     f = job_file(module_data_dir, job.id)
-    tmp = f.with_suffix(".tmp")
+    for attempt in range(5):
+        tmp = f.with_suffix(f".tmp.{os.getpid()}.{attempt}")
+        try:
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(job.to_dict(), fh, indent=2, ensure_ascii=False)
+            tmp.replace(f)
+            return
+        except OSError:
+            # 另一个线程抢先 rename 了,重试
+            time.sleep(0.01 * (2 ** attempt))
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+    # 最后一次尝试:直接用 replace(不做原子 rename)
+    tmp = f.with_suffix(f".tmp.{os.getpid()}")
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(job.to_dict(), fh, indent=2, ensure_ascii=False)
-    tmp.replace(f)
+    import shutil
+    shutil.copy2(tmp, f)
+    tmp.unlink(missing_ok=True)
 
 
 def load_job(module_data_dir: Path, job_id: str) -> Optional[Job]:
@@ -230,7 +253,7 @@ def delete_job(module_data_dir: Path, job_id: str) -> bool:
 def append_log(module_data_dir: Path, job_id: str, line: str) -> None:
     """追加日志一行(线程安全够用,不上锁)。"""
     f = log_file(module_data_dir, job_id)
-    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+    ts = datetime.now().strftime("%H:%M:%S")
     with open(f, "a", encoding="utf-8") as fh:
         fh.write(f"[{ts}] {line.rstrip()}\n")
 

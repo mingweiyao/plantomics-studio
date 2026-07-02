@@ -358,16 +358,18 @@ class BaseRunner(ABC):
         runner.job = job
         runner.data_dir = data_dir
         
-        # 信号:SIGTERM 触发取消,active_procs 一起 kill
+        # 信号:SIGTERM 触发取消,硬杀所有子进程(SIGTERM 可能被忽略)
         def on_signal(signum, frame):
             runner._cancelled = True
-            runner.log(f"收到信号 {signum},准备退出")
+            runner.log(f"收到信号 {signum},准备退出(硬杀子进程)")
             with runner._procs_lock:
                 for p in runner._active_procs:
                     try:
-                        p.terminate()
+                        p.kill()          # SIGKILL,子进程无法忽略
+                        p.wait(timeout=5) # 等它真死了
                     except Exception:
                         pass
+            runner.log("子进程已全部清理")
         
         signal.signal(signal.SIGTERM, on_signal)
         signal.signal(signal.SIGINT, on_signal)

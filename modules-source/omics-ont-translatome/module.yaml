@@ -1,0 +1,45 @@
+id: omics-ont-translatome
+name: ONT 全长翻译组分析
+version: 1.0.0
+description: |
+  基于 ONT 的 RNC 富集翻译组分析流程:
+  直接捕获与核糖体结合的 mRNA，鉴定活跃翻译的翻译本及异构体。
+  特有 ref vs all 双流程对比分析，揭示翻译组完整图景。
+author: PlantOmics Team
+license: GPL-3.0
+icon: layers
+
+core_required: ">=1.0.0,<2.0.0"
+
+extends:
+  project_types:
+    - id: ont_translatome
+      name: ONT 全长翻译组
+      description: RNC 富集的全长翻译本分析(翻译活性 mRNA)
+  reference_types:
+    - id: ont_translatome_reference
+      name: 翻译组参考(基因组+注释)
+      description: minimap2 比对用基因组 FASTA + GTF 注释
+      required_files:
+        - id: fasta
+          label: 基因组 FASTA
+          extensions: [fa, fasta, fna, fa.gz]
+          required: true
+        - id: gtf
+          label: 基因结构注释 GTF
+          extensions: [gtf, gff, gff3, gtf.gz]
+          required: true
+  menu_items:
+    - id: translatome
+      label: 翻译组分析
+      icon: layers
+      route: /translatome
+      description: 翻译本鉴定 / ref-vs-all / 定量 / AS
+
+runtime:
+  python:
+    entry: backend-py/main.py
+    health_path: /health
+  r:
+    entry: backend-r/plumber.R
+    health_path: /health
